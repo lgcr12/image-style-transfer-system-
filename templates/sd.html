@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SD 动漫风格转换</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="page-sd">
+    <div class="app">
+      <header class="app-header">
+        <a href="/local-history" class="header-history-float" title="本地记录（完整列表）">📜</a>
+        <h1>✨ SD 动漫风格转换</h1>
+        <p>img2img + 两个 LoRA + 可选正向/负向提示词</p>
+        <p style="margin-top: 12px;">
+          <a href="/">🔙 返回风格迁移页</a>
+        </p>
+      </header>
+
+      <main class="app-main">
+        <section class="card card-input">
+          <h2><span class="badge">INPUT</span> 1. 选择内容图</h2>
+          <div class="field">
+            <label>📸 内容图（必选）</label>
+            <input id="content-input" type="file" accept="image/*" />
+            <div class="preview" id="content-preview">点击上传内容图片</div>
+          </div>
+          <div class="output-nested sd-output-nested">
+            <h2 class="output-nested-heading"><span class="badge">OUTPUT</span> 结果预览</h2>
+            <div class="result-container">
+              <div id="result-gallery"></div>
+              <div id="result-placeholder" style="color: #94a3b8; text-align: center;">
+                ✨ 处理完成后，结果将在这里显示
+              </div>
+            </div>
+            <div class="output-actions">
+              <button id="run-btn" class="primary output-run-btn">🚀 开始转换</button>
+              <div id="status-text" class="status-text"></div>
+              <div class="progress-container">
+                <div id="progress-bar" class="progress-bar"></div>
+              </div>
+              <div id="queue-banner" class="queue-banner" hidden></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card card-param">
+          <h2><span class="badge">PARAM</span> 2. SD 参数</h2>
+
+          <div class="field">
+            <label for="sd-style-select">🎨 选择 LoRA 组合</label>
+            <select id="sd-style-select">
+              {% for key, name in sd_styles.items() %}
+              <option value="{{ key }}">{{ name }}</option>
+              {% endfor %}
+            </select>
+            <p class="help-text">💡 新模型推荐：DPM++ 2M Karras 20~60 步，CFG 4~9，重绘 0.3~0.6，负向词见下方。</p>
+            <p class="help-text" style="margin-top: 6px;">
+              <a href="/prompt-guide" target="_blank" rel="noopener noreferrer">📘 查看提示词帮助档案</a>
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="denoise-input">🔄 重绘强度（推荐 0.3~0.6，越大越像风格）</label>
+            <input id="denoise-input" type="range" min="0.1" max="0.95" step="0.01" value="0.5" />
+            <div class="strength-value" id="denoise-value">0.50</div>
+          </div>
+
+          <div class="field">
+            <label for="steps-input">⏱️ 迭代步数（DPM++ 2M Karras 推荐 20~60）</label>
+            <input id="steps-input" type="range" min="10" max="60" step="1" value="30" />
+            <div class="strength-value" id="steps-value">30</div>
+          </div>
+
+          <div class="field">
+            <label for="guidance-input">🎯 CFG Scale（推荐 4~9）</label>
+            <input id="guidance-input" type="range" min="1" max="12" step="0.5" value="7" />
+            <div class="strength-value" id="guidance-value">7</div>
+          </div>
+
+          <div class="field">
+            <label style="display:flex; align-items:center; gap:8px;">
+              <input id="quick-mode-input" type="checkbox" />
+              🚀 快速模式（优先速度，自动降低步数与分辨率）
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="prompt-input">🧠 正向提示词（可选）</label>
+            <textarea id="prompt-input" rows="3" placeholder="例如：masterpiece, best quality, anime style, detailed face, clean lineart, soft lighting">masterpiece, best quality, anime style, detailed face, clean lineart, soft lighting</textarea>
+          </div>
+
+          <div class="field">
+            <label for="negative-prompt-input">🚫 负向提示词（可选）</label>
+            <textarea id="negative-prompt-input" rows="3" placeholder="推荐：(worst quality, low quality), (zombie, interlocked fingers)">(worst quality, low quality), (zombie, interlocked fingers)</textarea>
+          </div>
+
+          <div class="field prompt-helper">
+            <label>⚡ 提示词快捷添加</label>
+            <div class="prompt-helper-grid">
+              <div class="prompt-helper-col">
+                <div class="chip-title">正向快捷词</div>
+                <select id="positive-preset-select">
+                  <option value="">选择正向预设并追加</option>
+                  <option value="portrait">人像转动漫（稳妥）</option>
+                  <option value="strong">风格更重（插画感）</option>
+                  <option value="scene">建筑场景（背景向）</option>
+                </select>
+                <div class="quick-chips" id="positive-chips">
+                  <button type="button" data-target="positive" data-word="masterpiece">+ masterpiece</button>
+                  <button type="button" data-target="positive" data-word="best quality">+ best quality</button>
+                  <button type="button" data-target="positive" data-word="anime style">+ anime style</button>
+                  <button type="button" data-target="positive" data-word="detailed face">+ detailed face</button>
+                  <button type="button" data-target="positive" data-word="clean lineart">+ clean lineart</button>
+                </div>
+              </div>
+              <div class="prompt-helper-col">
+                <div class="chip-title">负向快捷词</div>
+                <select id="negative-preset-select">
+                  <option value="">选择负向预设并追加</option>
+                  <option value="portrait">新模型推荐（默认）</option>
+                  <option value="noHires">无 Hires.fix 时使用</option>
+                  <option value="strong">强风格去噪点</option>
+                  <option value="scene">场景透视修正</option>
+                </select>
+                <div class="quick-chips" id="negative-chips">
+                  <button type="button" data-target="negative" data-word="lowres">+ lowres</button>
+                  <button type="button" data-target="negative" data-word="blurry">+ blurry</button>
+                  <button type="button" data-target="negative" data-word="bad anatomy">+ bad anatomy</button>
+                  <button type="button" data-target="negative" data-word="bad hands">+ bad hands</button>
+                  <button type="button" data-target="negative" data-word="watermark">+ watermark</button>
+                  <button type="button" data-target="negative" data-word="zombie">+ zombie</button>
+                  <button type="button" data-target="negative" data-word="interlocked fingers">+ interlocked fingers</button>
+                </div>
+              </div>
+            </div>
+            <div class="prompt-actions">
+              <button type="button" id="clear-positive-btn" class="secondary-btn">清空正向</button>
+              <button type="button" id="clear-negative-btn" class="secondary-btn">清空负向</button>
+              <button type="button" id="reset-prompts-btn" class="secondary-btn secondary-btn-primary">一键恢复默认词</button>
+            </div>
+            <p class="help-text">💡 现在已分为正向和负向两个分类，互不干扰、可分别追加。</p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span>🎨 支持 LoRA + 正向提示词 + 负向提示词</span>
+      </footer>
+    </div>
+
+    <script src="/static/history_local.js"></script>
+    <script src="/static/compare_ui.js"></script>
+    <script src="/static/sd.js"></script>
+  </body>
+</html>

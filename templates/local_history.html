@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>本地记录</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="page-history">
+    <div class="app">
+      <header class="app-header history-page-header">
+        <div class="history-header-inner">
+          <div class="header-title-block">
+            <p class="history-page-kicker">仅保存在本机浏览器</p>
+            <h1><span class="history-page-title-icon" aria-hidden="true">📜</span> 本地记录</h1>
+            <p class="history-page-desc">
+              最近 <strong>20</strong> 条任务摘要；可一键复用参数、回到对应页面查看大图或下载 PNG。
+            </p>
+          </div>
+          <nav class="header-nav-links history-nav-pills" aria-label="页面跳转">
+            <a href="/" class="history-nav-pill">🎨 风格迁移</a>
+            <a href="/sd" class="history-nav-pill">✨ SD 转换</a>
+          </nav>
+        </div>
+      </header>
+
+      <main class="app-main app-main--single">
+        <section class="card card-history-page">
+          <div class="history-page-list-head">
+            <h2 class="history-list-heading">记录列表</h2>
+            <span id="history-count" class="history-count-badge" aria-live="polite">—</span>
+          </div>
+          <div id="history-list" class="local-history-list"></div>
+        </section>
+      </main>
+
+      <footer class="app-footer history-page-footer">
+        <span>🔒 数据仅存于当前浏览器 · 清空站点数据后会丢失</span>
+      </footer>
+    </div>
+
+    <script src="/static/history_local.js"></script>
+    <script src="/static/history_page.js"></script>
+  </body>
+</html>

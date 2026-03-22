@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>风格迁移在线体验</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="page-index">
+    <div class="app">
+      <header class="app-header">
+        <a href="/local-history" class="header-history-float" title="本地记录（完整列表）">📜</a>
+        <h1>🎨 风格迁移在线系统</h1>
+        <p>选择模型、上传图片，在 GPU 上实时查看风格迁移进度</p>
+        <p style="margin-top: 12px;">
+          <a href="/sd">✨ 切换到 SD 动漫风格转换</a>
+        </p>
+      </header>
+
+      <main class="app-main">
+        <section class="card card-model">
+          <h2><span class="badge">SCI-FI</span> 1. 选择模型</h2>
+          <select id="model-select">
+            {% for key, name in models.items() %}
+            <option value="{{ key }}">{{ name }}</option>
+            {% endfor %}
+          </select>
+          <p class="help-text" style="margin-top:10px;">💡 VGG19 需要额外上传风格图，其它模型只需内容图。</p>
+        </section>
+
+        <section class="card card-upload">
+          <h2><span class="badge">NAV</span> 2. 上传图片</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label>📸 内容图（必选）</label>
+              <input id="content-input" type="file" accept="image/*" />
+              <div class="preview" id="content-preview">点击上传内容图片</div>
+            </div>
+            <div class="field">
+              <label>🎭 风格图（VGG19 必选，其它可选）</label>
+              <input id="style-input" type="file" accept="image/*" />
+              <div class="preview" id="style-preview">点击上传风格图片</div>
+              <p class="help-text">💡 上传风格图可获得更明显的迁移效果。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card card-run">
+          <h2><span class="badge">ENGINE</span> 3. 执行风格迁移</h2>
+          <div class="field">
+            <label for="strength-input">⚡ 风格强度（越大越明显）</label>
+            <input id="strength-input" type="range" min="0" max="3" step="0.05" value="1.5" />
+            <div class="strength-value" id="strength-value">1.50</div>
+          </div>
+        </section>
+
+        <section class="card card-output">
+          <h2><span class="badge">OUTPUT</span> 4. 结果预览</h2>
+          <div class="result-container">
+            <div id="result-gallery"></div>
+            <div id="result-placeholder">✨ 处理完成后，结果将在这里显示</div>
+          </div>
+          <div class="output-actions">
+            <button id="run-btn" class="primary output-run-btn">🚀 开始迁移</button>
+            <div id="status-text" class="status-text"></div>
+            <div class="progress-container">
+              <div id="progress-bar" class="progress-bar"></div>
+            </div>
+            <div id="queue-banner" class="queue-banner" hidden></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span>⚙️ GPU 自动检测使用（CUDA 优先，其次 CPU）</span>
+      </footer>
+    </div>
+
+    <script src="/static/history_local.js"></script>
+    <script src="/static/compare_ui.js"></script>
+    <script src="/static/main.js"></script>
+  </body>
+</html>

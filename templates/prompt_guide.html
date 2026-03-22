@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>提示词帮助档案</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background:
+          radial-gradient(1200px 450px at 10% -10%, #e0e7ff 0%, transparent 60%),
+          radial-gradient(900px 380px at 100% 0%, #f5d0fe 0%, transparent 55%),
+          #f8fafc;
+        color: #0f172a;
+      }
+      .hero {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 22px 16px 0;
+      }
+      .hero-inner {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 42%, #db2777 100%);
+        color: #fff;
+        border-radius: 16px;
+        padding: 22px 22px 18px;
+        box-shadow: 0 12px 30px rgba(79, 70, 229, 0.28);
+      }
+      .hero h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.25;
+      }
+      .hero p {
+        margin: 0;
+        opacity: 0.95;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 16px 16px 40px;
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        gap: 20px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+      }
+      .toc { position: sticky; top: 16px; padding: 14px; height: fit-content; }
+      .toc h3 { margin: 0 0 8px; font-size: 14px; color: #475569; letter-spacing: .02em; }
+      .toc-item {
+        display: block;
+        color: #334155;
+        text-decoration: none;
+        margin: 6px 0;
+        padding: 6px 8px;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: background .15s ease, color .15s ease;
+      }
+      .toc-item.level-2 { padding-left: 10px; }
+      .toc-item.level-3 { padding-left: 20px; color: #64748b; }
+      .toc-item:hover { color: #4f46e5; background: #eef2ff; }
+      .toc-item.active {
+        color: #4338ca;
+        background: #e0e7ff;
+        font-weight: 700;
+      }
+      .content { padding: 18px 22px; line-height: 1.75; }
+      h1, h2, h3 { scroll-margin-top: 20px; line-height: 1.35; }
+      h1 { font-size: 28px; margin: 6px 0 14px; }
+      h2 {
+        font-size: 22px;
+        margin: 24px 0 12px;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 6px;
+        color: #1e1b4b;
+      }
+      h3 { font-size: 18px; margin: 16px 0 8px; }
+      p { margin: 8px 0; color: #334155; }
+      ul { margin: 8px 0 10px 20px; }
+      li { margin: 4px 0; }
+      hr {
+        border: 0;
+        height: 1px;
+        margin: 18px 0;
+        background: linear-gradient(90deg, transparent, #cbd5e1, transparent);
+      }
+      .content p:has(+ ul) {
+        font-weight: 600;
+        color: #1f2937;
+      }
+      pre {
+        background: #0b1020;
+        color: #e2e8f0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        overflow: auto;
+        border: 1px solid #1e293b;
+      }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+      @media (max-width: 900px) {
+        .wrap { grid-template-columns: 1fr; }
+        .toc { position: static; }
+        .hero h1 { font-size: 24px; }
+        .hero-inner { padding: 18px 16px 14px; }
+        .content { padding: 16px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <h1>SD 提示词帮助档案</h1>
+        <p>快速找到适合你图片的提示词与参数组合</p>
+      </div>
+    </header>
+    <div class="wrap">
+      <aside class="card toc">
+        <h3>目录</h3>
+        {{ toc_html|safe }}
+      </aside>
+      <main class="card content">
+        {{ content_html|safe }}
+      </main>
+    </div>
+    <script>
+      (() => {
+        const tocLinks = Array.from(document.querySelectorAll(".toc-item"));
+        if (!tocLinks.length) return;
+
+        const sectionMap = new Map();
+        for (const link of tocLinks) {
+          const id = (link.getAttribute("href") || "").replace(/^#/, "");
+          if (!id) continue;
+          const section = document.getElementById(id);
+          if (section) sectionMap.set(link, section);
+        }
+        const entries = Array.from(sectionMap.entries());
+        if (!entries.length) return;
+
+        function setActive(link) {
+          tocLinks.forEach((l) => l.classList.toggle("active", l === link));
+        }
+
+        function updateActiveByScroll() {
+          const marker = window.innerHeight * 0.25;
+          let current = entries[0][0];
+          for (const [link, section] of entries) {
+            const top = section.getBoundingClientRect().top;
+            if (top <= marker) {
+              current = link;
+            } else {
+              break;
+            }
+          }
+          setActive(current);
+        }
+
+        tocLinks.forEach((link) => {
+          link.addEventListener("click", () => {
+            setActive(link);
+          });
+        });
+
+        updateActiveByScroll();
+        window.addEventListener("scroll", updateActiveByScroll, { passive: true });
+        window.addEventListener("resize", updateActiveByScroll);
+      })();
+    </script>
+  </body>
+</html>

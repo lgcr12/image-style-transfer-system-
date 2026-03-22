@@ -1,0 +1,511 @@
+from __future__ import annotations
+
+import os
+import sys
+import contextlib
+import threading
+import io
+from pathlib import Path
+from typing import Callable, Dict, Optional
+
+import torch
+
+from diffusers import (
+    DPMSolverMultistepScheduler,
+    StableDiffusionImg2ImgPipeline,
+)
+
+
+AVAILABLE_SD_STYLES: Dict[str, str] = {
+    # 你可以在环境变量里把 LoRA 路径指向不同文件，实现不同风格。
+    # 这里的“风格名”用来选择启用哪些 LoRA 以及它们的权重。
+    "default": "两个 LoRA 都用（0.8 / 0.7）",
+    "lora1": "只用 LoRA1（水彩泼墨画风）",
+    "lora2": "只用 LoRA2（百花缭乱 Midjourney）",
+}
+
+
+_PIPELINE_LOCK = threading.Lock()
+_PIPELINE: Optional[StableDiffusionImg2ImgPipeline] = None
+_TQDM_PATCHED = False
+_DIFFUSERS_TQDM_PATCHED = False
+_DIFFUSERS_PROGRESS_PATCHED = False
+_SAFE_PROGRESS_FILE = None
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_SD_SINGLE_FILE = BASE_DIR / "MeinaMixV12.safetensors"
+DEFAULT_SD_DIFFUSERS_DIR = BASE_DIR / "sd_base_v1_5"
+
+
+def _get_device() -> torch.device:
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _round_to_multiple(x: int, base: int = 64) -> int:
+    return int(round(x / base) * base)
+
+
+def _patch_tqdm_stderr_once() -> None:
+    """
+    在部分 Windows 终端环境里，tqdm 初始化时会对 sys.stderr.flush() 抛 OSError(22)。
+    这里对 tqdm 的 status_printer 做一次安全补丁，避免任务被中断。
+    """
+    global _TQDM_PATCHED
+    if _TQDM_PATCHED:
+        return
+    try:
+        import tqdm.std as tqdm_std
+
+        def _safe_status_printer(file):
+            fp = file
+
+            def _printer(status: str):
+                try:
+                    fp.write(status)
+                    fp.flush()
+                except Exception:
+                    pass
+
+            return _printer
+
+        tqdm_std.tqdm.status_printer = staticmethod(_safe_status_printer)  # type: ignore[attr-defined]
+        _TQDM_PATCHED = True
+    except Exception:
+        # 补丁失败时不阻塞主流程，仍然尝试正常推理
+        pass
+
+
+class _SafeConsoleIO(io.StringIO):
+    """用于屏蔽异常终端句柄的安全输出流。"""
+
+    def flush(self) -> None:  # type: ignore[override]
+        try:
+            super().flush()
+        except Exception:
+            pass
+
+    def isatty(self) -> bool:  # pragma: no cover - compatibility
+        return False
+
+
+class _SafeStderr:
+    """屏蔽异常终端句柄下的 stderr.flush OSError(22)。"""
+
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+
+    def write(self, data):
+        try:
+            return self._wrapped.write(data)
+        except OSError:
+            return 0
+
+    def flush(self):
+        try:
+            return self._wrapped.flush()
+        except OSError:
+            return None
+
+    def isatty(self):
+        try:
+            return self._wrapped.isatty()
+        except Exception:
+            return False
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
+class _NullProgressBar:
+    """兼容 diffusers `with self.progress_bar(...) as pb` 调用的空进度条。"""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def update(self, n: int = 1) -> None:
+        return None
+
+    def __iter__(self):
+        return iter(())
+
+
+def _patch_diffusers_tqdm_once() -> None:
+    """
+    直接替换 diffusers.pipeline_utils 的 tqdm 引用，避免进入 tqdm 初始化逻辑。
+    """
+    global _DIFFUSERS_TQDM_PATCHED
+    if _DIFFUSERS_TQDM_PATCHED:
+        return
+    try:
+        from diffusers.pipelines import pipeline_utils as _pu
+        
+        def _safe_tqdm(iterable=None, *args, **kwargs):
+            # 兼容 from_pretrained 内部 `for ... in tqdm(iterable, ...)` 的调用
+            if iterable is not None:
+                return iterable
+            return _NullProgressBar()
+
+        _pu.tqdm = _safe_tqdm  # type: ignore[assignment]
+        _DIFFUSERS_TQDM_PATCHED = True
+    except Exception:
+        pass
+
+
+def _patch_diffusers_progress_bar_once() -> None:
+    """
+    直接替换 DiffusionPipeline.progress_bar，彻底绕开 tqdm。
+    """
+    global _DIFFUSERS_PROGRESS_PATCHED
+    if _DIFFUSERS_PROGRESS_PATCHED:
+        return
+    try:
+        from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+
+        def _safe_progress_bar(self, iterable=None, total=None):
+            if iterable is not None:
+                return iterable
+            return _NullProgressBar()
+
+        DiffusionPipeline.progress_bar = _safe_progress_bar  # type: ignore[assignment]
+        _DIFFUSERS_PROGRESS_PATCHED = True
+    except Exception:
+        pass
+
+
+def _resize_for_img2img(pil_img, max_side: int = 768, base: int = 64):
+    w, h = pil_img.size
+    if max(w, h) <= max_side:
+        new_w = _round_to_multiple(w, base)
+        new_h = _round_to_multiple(h, base)
+        new_w = max(base, new_w)
+        new_h = max(base, new_h)
+        return pil_img.resize((new_w, new_h))
+
+    scale = max_side / float(max(w, h))
+    new_w = _round_to_multiple(int(w * scale), base)
+    new_h = _round_to_multiple(int(h * scale), base)
+    new_w = max(base, new_w)
+    new_h = max(base, new_h)
+    return pil_img.resize((new_w, new_h))
+
+
+def _load_pipeline_if_needed(
+    phase_callback: Optional[Callable[[str, Optional[str]], None]] = None,
+) -> StableDiffusionImg2ImgPipeline:
+    global _PIPELINE
+    _patch_tqdm_stderr_once()
+    _patch_diffusers_tqdm_once()
+    _patch_diffusers_progress_bar_once()
+    if _PIPELINE is not None:
+        return _PIPELINE
+
+    with _PIPELINE_LOCK:
+        if _PIPELINE is not None:
+            return _PIPELINE
+
+        env_model = os.environ.get("SD_BASE_MODEL_ID_OR_PATH", "").strip()
+        if env_model:
+            model_id_or_path = env_model
+        elif DEFAULT_SD_SINGLE_FILE.exists():
+            # 精简路径：优先本地单文件模型，减少 from_pretrained 组件拉取
+            model_id_or_path = str(DEFAULT_SD_SINGLE_FILE)
+        else:
+            model_id_or_path = "runwayml/stable-diffusion-v1-5"
+
+        allow_download = os.environ.get("SD_ALLOW_DOWNLOAD", "0").strip() == "1"
+        is_single_file = isinstance(model_id_or_path, str) and (
+            model_id_or_path.endswith(".safetensors") or model_id_or_path.endswith(".ckpt")
+        )
+        path_exists = Path(model_id_or_path).exists()
+        looks_remote = model_id_or_path.startswith("runwayml/") or (
+            not path_exists and "/" in model_id_or_path and not Path(model_id_or_path).is_absolute()
+        )
+        if phase_callback:
+            if allow_download and looks_remote:
+                phase_callback(
+                    "downloading",
+                    "正在从网络下载或更新模型缓存（Hugging Face，首次可能较慢）…",
+                )
+            elif is_single_file:
+                phase_callback(
+                    "loading_model",
+                    "正在从本地权重与 diffusers 配置加载 SD 管线…",
+                )
+            else:
+                phase_callback(
+                    "loading_model",
+                    "正在加载 Stable Diffusion（UNet / VAE / 文本编码器）…",
+                )
+
+        device = _get_device()
+        # 速度优先：CUDA 上使用 fp16，CPU 保持 fp32
+        dtype = torch.float16 if device.type == "cuda" else torch.float32
+
+        local_files_only = not allow_download
+
+        # 允许本地离线加载：
+        # - 如果 SD_BASE_MODEL_ID_OR_PATH 指向 .safetensors/.ckpt 单文件权重，
+        #   则需要同时提供 SD_BASE_DIFFUSERS_DIR（本地 diffusers 格式目录，包含 model_index.json）。
+        #
+        # - 如果 SD_BASE_MODEL_ID_OR_PATH 指向 diffusers 格式目录，则直接 from_pretrained。
+        if is_single_file:
+            local_diffusers_dir = os.environ.get("SD_BASE_DIFFUSERS_DIR", "").strip()
+            if not local_diffusers_dir:
+                if DEFAULT_SD_DIFFUSERS_DIR.exists():
+                    local_diffusers_dir = str(DEFAULT_SD_DIFFUSERS_DIR)
+                else:
+                    raise RuntimeError(
+                        "SD_BASE_MODEL_ID_OR_PATH 指向单文件权重，但缺少离线配置目录："
+                        "请设置 SD_BASE_DIFFUSERS_DIR（本地 diffusers 格式目录，包含 model_index.json）。"
+                    )
+            if not Path(local_diffusers_dir).exists():
+                raise FileNotFoundError(
+                    f"找不到 SD_BASE_DIFFUSERS_DIR：{local_diffusers_dir}"
+                )
+
+            try:
+                pipe = StableDiffusionImg2ImgPipeline.from_single_file(
+                    model_id_or_path,
+                    config=local_diffusers_dir,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                    local_files_only=local_files_only,
+                )
+            except TypeError:
+                # diffusers 版本对参数名有差异时兜底
+                pipe = StableDiffusionImg2ImgPipeline.from_single_file(
+                    model_id_or_path,
+                    config=local_diffusers_dir,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                )
+        else:
+            # diffusers 不同版本对 from_pretrained 的参数兼容性略有差异，这里做保护性处理。
+            try:
+                pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+                    model_id_or_path,
+                    torch_dtype=dtype,
+                    safety_checker=None,  # 关闭安全检查，避免额外开销/依赖
+                    local_files_only=local_files_only,
+                )
+            except TypeError:
+                pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+                    model_id_or_path,
+                    torch_dtype=dtype,
+                )
+                # 兜底：如果安全检查仍存在则关闭
+                if hasattr(pipe, "safety_checker"):
+                    pipe.safety_checker = None
+                if local_files_only and not allow_download:
+                    # 这里没法强制 local_files_only（因为 diffusers 版本不支持该参数）
+                    # 仍然保持默认行为，但尽量让报错更可读。
+                    pass
+            except OSError as e:
+                raise RuntimeError(
+                    "SD 基础模型加载失败：可能未下载/未在本地缓存。"
+                    "请先把 SD 基础模型下载到本地目录，并把环境变量 "
+                    "`SD_BASE_MODEL_ID_OR_PATH` 指向该目录；或设置 `SD_ALLOW_DOWNLOAD=1` "
+                    "允许联网下载（可能会因网络超时失败）。"
+                ) from e
+
+        # 强制关闭安全检查器：部分版本/模型组合会把输出替换为黑图
+        if hasattr(pipe, "safety_checker"):
+            pipe.safety_checker = None
+        if hasattr(pipe, "requires_safety_checker"):
+            pipe.requires_safety_checker = False
+        # 关闭/重定向 diffusers 进度条输出，避免某些终端环境触发 stderr Invalid argument
+        global _SAFE_PROGRESS_FILE
+        if _SAFE_PROGRESS_FILE is None:
+            _SAFE_PROGRESS_FILE = _SafeConsoleIO()
+        if hasattr(pipe, "set_progress_bar_config"):
+            pipe.set_progress_bar_config(disable=True, leave=False, file=_SAFE_PROGRESS_FILE)
+        # 双保险：直接写入内部配置字典
+        pipe._progress_bar_config = {  # type: ignore[attr-defined]
+            "disable": True,
+            "leave": False,
+            "file": _SAFE_PROGRESS_FILE,
+        }
+        # 根因修复：直接替换 progress_bar，彻底绕开 tqdm 初始化/flush
+        pipe.progress_bar = lambda total=None: _NullProgressBar()
+
+        # 使用更稳定的采样器（不同环境效果略有差异）。
+        # 某些环境下 scipy 损坏会导致 scheduler 兼容类导入失败；
+        # 这里做兜底：失败时保留 pipeline 默认 scheduler，避免整条推理链路报错中断。
+        try:
+            pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+        except Exception:
+            pass
+        pipe.to(device)
+        _PIPELINE = pipe
+        return pipe
+
+
+def run_sd_style_transfer(
+    *,
+    sd_style_name: str,
+    content_path: Path,
+    output_path: Path,
+    denoising_strength: float,
+    guidance_scale: float,
+    num_inference_steps: int,
+    prompt: str,
+    negative_prompt: str,
+    quick_mode: bool,
+    progress_callback: Callable[[int], None],
+    phase_callback: Optional[Callable[[str, Optional[str]], None]] = None,
+):
+    """
+    实现目标：
+    - LoRA + 可选 prompt/negative_prompt 做风格控制
+    - img2img：输入是一张“内容图”（可为建筑/人物）
+    """
+    if sd_style_name not in AVAILABLE_SD_STYLES:
+        raise ValueError(f"未知 sd_style_name: {sd_style_name}")
+
+    def _ph(phase: str, detail: Optional[str] = None) -> None:
+        if phase_callback is not None:
+            phase_callback(phase, detail)
+
+    # 强制在推理入口执行一次补丁（不依赖 pipeline 初始化路径）
+    sys.stderr = _SafeStderr(sys.stderr)
+    _patch_tqdm_stderr_once()
+    _patch_diffusers_tqdm_once()
+    _patch_diffusers_progress_bar_once()
+
+    pipe = _load_pipeline_if_needed(phase_callback=_ph)
+    _ph("running", "LoRA 与 img2img 采样中（步进进度见下方）…")
+
+    # 优先用环境变量；如果没有设置，就用你当前已放在 E:\\models 下的两个 LoRA 作为默认。
+    lora1_path = os.environ.get(
+        "SD_LORA_1_PATH",
+        r"E:\models\水彩泼墨画风-lora_v2.safetensors",
+    ).strip()
+    lora2_path = os.environ.get(
+        "SD_LORA_2_PATH",
+        r"E:\models\百花缭乱_midjourney 二次元 Lora_v1.0.safetensors",
+    ).strip()
+
+    lora1_file = Path(lora1_path)
+    lora2_file = Path(lora2_path)
+    if not lora1_file.exists():
+        raise FileNotFoundError(f"找不到 LoRA：{lora1_file}")
+    if not lora2_file.exists():
+        raise FileNotFoundError(f"找不到 LoRA：{lora2_file}")
+
+    # 只加载一次 LoRA（每次 set_adapters 只切换权重）
+    # diffusers 的 LoRA 在内部是以 adapter_name 注册的，我们固定命名。
+    with _PIPELINE_LOCK:
+        # 避免重复 load：通过在模型上挂一个标记判断
+        if not getattr(pipe, "_lora_loaded", False):
+            pipe.load_lora_weights(str(lora1_file), adapter_name="lora1")
+            pipe.load_lora_weights(str(lora2_file), adapter_name="lora2")
+            setattr(pipe, "_lora_loaded", True)
+
+    from PIL import Image
+
+    content_img = Image.open(content_path).convert("RGB")
+    max_side = 640 if quick_mode else 768
+    content_img = _resize_for_img2img(content_img, max_side=max_side, base=64)
+
+    # 使用 diffusers callback 按采样步更新进度（兼容 0.21.x）
+    # 注意：progress_callback 内部如果抛异常（例如取消），这里会中止推理。
+    def _callback(step: int, timestep: int, latents: "torch.FloatTensor"):
+        # step: 从 0 开始，映射到 10..95
+        total = max(1, int(num_inference_steps))
+        p = int((step + 1) / total * 85) + 10
+        progress_callback(min(95, max(0, p)))
+
+    progress_callback(5)
+
+    prompt_text = (prompt or "").strip()
+    negative_prompt_text = (negative_prompt or "").strip()
+    steps_i = int(num_inference_steps)
+    denoise_f = float(denoising_strength)
+    guidance_f = float(guidance_scale)
+    if quick_mode:
+        # 快速模式：减少步数和重绘幅度，优先保证响应速度
+        steps_i = max(12, min(24, steps_i))
+        denoise_f = max(0.35, min(0.55, denoise_f))
+        # default 在旧兼容路径下可能双次生成，快速模式下改为单 LoRA 提速
+        if sd_style_name == "default":
+            sd_style_name = "lora1"
+
+    # 根据选择启用不同 LoRA 组合：
+    # - 新版 diffusers: 使用 set_adapters 做多 LoRA 混合
+    # - 旧版 diffusers: 回退到单 LoRA / 双次生成后融合，避免版本不兼容直接失败
+    adapter_config: Dict[str, tuple[list[str], list[float]]] = {
+        "default": (["lora1", "lora2"], [0.8, 0.7]),
+        "lora1": (["lora1"], [1.0]),
+        "lora2": (["lora2"], [1.0]),
+    }
+    adapters, adapter_weights = adapter_config[sd_style_name]
+
+    def _run_pipe_once(callback_fn=None):
+        # 兜底：某些 Windows 终端环境下 tqdm 会对 stderr.flush() 抛 Errno 22
+        # 这里在推理调用期间把 stdout/stderr 重定向到安全内存流，避免触发无效句柄。
+        safe_io = _SafeConsoleIO()
+        with contextlib.redirect_stderr(safe_io), contextlib.redirect_stdout(safe_io):
+            return pipe(
+                prompt=prompt_text,
+                negative_prompt=negative_prompt_text,
+                image=content_img,
+                strength=denoise_f,
+                guidance_scale=guidance_f,
+                num_inference_steps=steps_i,
+                callback=callback_fn,
+                callback_steps=1,
+            )
+
+    image_out = None
+    if hasattr(pipe, "set_adapters"):
+        pipe.set_adapters(adapters, adapter_weights=adapter_weights)
+        result = _run_pipe_once(_callback)
+        image_out = result.images[0]
+        progress_callback(100)
+    else:
+        # 旧版 diffusers 回退路径
+        # 1) 如果只选一个 LoRA，直接单次生成
+        if sd_style_name in {"lora1", "lora2"}:
+            target_path = lora1_file if sd_style_name == "lora1" else lora2_file
+            with _PIPELINE_LOCK:
+                if hasattr(pipe, "unload_lora_weights"):
+                    try:
+                        pipe.unload_lora_weights()
+                    except Exception:
+                        pass
+                pipe.load_lora_weights(str(target_path))
+            result = _run_pipe_once(_callback)
+            image_out = result.images[0]
+            progress_callback(100)
+        else:
+            # 2) default 双 LoRA：分两次生成并按权重融合，保证“可用优先”
+            with _PIPELINE_LOCK:
+                if hasattr(pipe, "unload_lora_weights"):
+                    try:
+                        pipe.unload_lora_weights()
+                    except Exception:
+                        pass
+                pipe.load_lora_weights(str(lora1_file))
+            result1 = _run_pipe_once(None)
+            progress_callback(52)
+
+            with _PIPELINE_LOCK:
+                if hasattr(pipe, "unload_lora_weights"):
+                    try:
+                        pipe.unload_lora_weights()
+                    except Exception:
+                        pass
+                pipe.load_lora_weights(str(lora2_file))
+            result2 = _run_pipe_once(None)
+            progress_callback(96)
+
+            img1 = result1.images[0]
+            img2 = result2.images[0]
+            alpha = 0.7 / (0.8 + 0.7)
+            image_out = Image.blend(img1, img2, alpha=alpha)
+            progress_callback(100)
+
+    image_out.save(output_path)
+

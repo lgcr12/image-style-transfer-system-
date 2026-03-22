@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# App runtime / uploads
+results/
+uploads/
+
+# Editor / tooling
+.cursor/
+
+# Large ML weights & diffusion bundle (keep on disk, not in git)
+*.safetensors
+*.ckpt
+*.pth
+*.onnx
+*.pt
+*.bin
+*.mat
+sd_base_v1_5/
