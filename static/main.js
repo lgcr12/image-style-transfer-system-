@@ -297,6 +297,25 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     imageIndex > 0 ? `仅下载第 ${imageIndex + 1} 张结果` : "仅下载结果图";
   actions.appendChild(dlResult);
 
+  const copyLinkBtn = document.createElement("button");
+  copyLinkBtn.type = "button";
+  copyLinkBtn.className = "secondary-btn";
+  copyLinkBtn.textContent = "复制图片链接";
+  copyLinkBtn.title = "复制该结果图的完整 URL";
+  copyLinkBtn.addEventListener("click", async () => {
+    const abs = new URL(resultSrc, window.location.origin).href;
+    try {
+      await navigator.clipboard.writeText(abs);
+      copyLinkBtn.textContent = "已复制";
+      setTimeout(() => {
+        copyLinkBtn.textContent = "复制图片链接";
+      }, 1600);
+    } catch (_) {
+      window.prompt("请手动复制链接：", abs);
+    }
+  });
+  actions.appendChild(copyLinkBtn);
+
   if (imageIndex === 0) {
     const dlCompare = document.createElement("a");
     const cmpUrl =
@@ -609,6 +628,22 @@ document.addEventListener("visibilitychange", () => {
   if (pollingTimer) clearTimeout(pollingTimer);
   pollingTimer = null;
   void pollStatus();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
+  if (!runBtn || runBtn.disabled) return;
+  e.preventDefault();
+  runBtn.click();
+});
+
+document.querySelectorAll(".strength-quick-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const v = btn.dataset.strength;
+    if (!strengthInput || v == null || v === "") return;
+    strengthInput.value = v;
+    syncStrengthUI();
+  });
 });
 
 consumeHistoryApplyMain();

@@ -1145,6 +1145,40 @@ input[type="file"]::file-selector-button:hover {
   margin-top: 12px;
 }
 
+.strength-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.strength-quick-label {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.shortcut-hint {
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: 12px;
+  opacity: 0.88;
+}
+
+.shortcut-hint kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+
+.sd-triple-row {
+  margin-top: 4px;
+}
+
 .result-container.celebrate-result {
   animation: celebrate-glow 2s ease-out forwards;
 }

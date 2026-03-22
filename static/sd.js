@@ -243,6 +243,41 @@ const negativePresets = {
   noHires: "(worst quality:1.6, low quality:1.6), (zombie, sketch, interlocked fingers, comic)",
 };
 
+/** 一键套系：重绘 / 步数 / CFG（不改 LoRA 与提示词） */
+const SD_PARAM_TRIPLES = {
+  light: { denoise: 0.38, steps: 26, guidance: 6 },
+  balanced: { denoise: 0.52, steps: 34, guidance: 7 },
+  heavy: { denoise: 0.68, steps: 42, guidance: 8 },
+};
+
+function applySdParamTriple(key) {
+  const p = SD_PARAM_TRIPLES[key];
+  if (!p) return;
+  if (denoiseInput) {
+    const dmin = Number.parseFloat(denoiseInput.min);
+    const dmax = Number.parseFloat(denoiseInput.max);
+    const dv = Math.min(dmax, Math.max(dmin, p.denoise));
+    denoiseInput.value = String(dv);
+    syncRangeUI(denoiseInput, denoiseValue, 2);
+  }
+  if (stepsInput) {
+    const smin = Number.parseInt(stepsInput.min, 10);
+    const smax = Number.parseInt(stepsInput.max, 10);
+    const sv = Math.min(smax, Math.max(smin, p.steps));
+    stepsInput.value = String(sv);
+    syncRangeUI(stepsInput, stepsValue, 0);
+  }
+  if (guidanceInput) {
+    const gmin = Number.parseFloat(guidanceInput.min);
+    const gmax = Number.parseFloat(guidanceInput.max);
+    const gv = Math.min(gmax, Math.max(gmin, p.guidance));
+    guidanceInput.value = String(gv);
+    syncRangeUI(guidanceInput, guidanceValue, 1);
+  }
+  const tripleLabels = { light: "轻触风格", balanced: "均衡默认", heavy: "重风格" };
+  if (statusText) statusText.textContent = "已应用「" + (tripleLabels[key] || key) + "」";
+}
+
 function appendPromptText(inputEl, chunk) {
   if (!inputEl || !chunk) return;
   const base = (inputEl.value || "").trim();
@@ -395,6 +430,25 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   dlResult.textContent =
     imageIndex > 0 ? `仅下载第 ${imageIndex + 1} 张结果` : "仅下载结果图";
   actions.appendChild(dlResult);
+
+  const copyLinkBtn = document.createElement("button");
+  copyLinkBtn.type = "button";
+  copyLinkBtn.className = "secondary-btn";
+  copyLinkBtn.textContent = "复制图片链接";
+  copyLinkBtn.title = "复制该结果图的完整 URL";
+  copyLinkBtn.addEventListener("click", async () => {
+    const abs = new URL(resultSrc, window.location.origin).href;
+    try {
+      await navigator.clipboard.writeText(abs);
+      copyLinkBtn.textContent = "已复制";
+      setTimeout(() => {
+        copyLinkBtn.textContent = "复制图片链接";
+      }, 1600);
+    } catch (_) {
+      window.prompt("请手动复制链接：", abs);
+    }
+  });
+  actions.appendChild(copyLinkBtn);
 
   if (imageIndex === 0) {
     const dlCompare = document.createElement("a");
@@ -721,6 +775,21 @@ document.addEventListener("visibilitychange", () => {
   if (pollingTimer) clearTimeout(pollingTimer);
   pollingTimer = null;
   void pollStatus();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
+  if (!runBtn || runBtn.disabled) return;
+  e.preventDefault();
+  runBtn.click();
+});
+
+document.querySelectorAll(".sd-triple-preset").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const key = btn.dataset.preset;
+    if (!key) return;
+    applySdParamTriple(key);
+  });
 });
 
 consumeHistoryApplySd();

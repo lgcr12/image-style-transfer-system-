@@ -60,6 +60,12 @@
             <label for="strength-input">⚡ 风格强度（越大越明显）</label>
             <input id="strength-input" type="range" min="0" max="3" step="0.05" value="1.5" />
             <div class="strength-value" id="strength-value">1.50</div>
+            <div class="strength-quick-row" role="group" aria-label="强度快捷">
+              <span class="strength-quick-label">快捷</span>
+              <button type="button" class="secondary-btn strength-quick-btn" data-strength="0.85">偏轻</button>
+              <button type="button" class="secondary-btn strength-quick-btn" data-strength="1.50">中等</button>
+              <button type="button" class="secondary-btn strength-quick-btn" data-strength="2.35">偏重</button>
+            </div>
           </div>
           <div class="fun-actions" role="group" aria-label="趣味快捷">
             <button type="button" id="random-params-btn" class="secondary-btn">🎲 随机参数</button>
@@ -81,6 +87,7 @@
               <div id="progress-bar" class="progress-bar"></div>
             </div>
             <div id="queue-banner" class="queue-banner" hidden></div>
+            <p class="help-text shortcut-hint">快捷键：<kbd>Ctrl</kbd>+<kbd>Enter</kbd> 开始迁移</p>
           </div>
         </section>
       </main>
