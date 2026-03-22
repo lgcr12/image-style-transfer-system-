@@ -61,6 +61,95 @@ function notifyDone(title, body) {
   } catch (_) {}
 }
 
+function playCompleteCelebration() {
+  const el =
+    document.querySelector(".sd-output-nested .result-container") || document.querySelector(".result-container");
+  if (!el) return;
+  el.classList.remove("celebrate-result");
+  requestAnimationFrame(() => {
+    void el.offsetWidth;
+    el.classList.add("celebrate-result");
+    setTimeout(() => el.classList.remove("celebrate-result"), 2100);
+  });
+}
+
+function randomizeSdParams() {
+  if (sdStyleSelect && sdStyleSelect.options.length) {
+    const opts = Array.from(sdStyleSelect.options);
+    const pick = opts[Math.floor(Math.random() * opts.length)];
+    sdStyleSelect.value = pick.value;
+  }
+  if (denoiseInput) {
+    const min = Number.parseFloat(denoiseInput.min);
+    const max = Number.parseFloat(denoiseInput.max);
+    const v = min + Math.random() * (max - min);
+    const rounded = Math.round(v * 100) / 100;
+    denoiseInput.value = String(Math.min(max, Math.max(min, rounded)));
+    syncRangeUI(denoiseInput, denoiseValue, 2);
+  }
+  if (stepsInput) {
+    const lo = 18;
+    const hi = 52;
+    const steps = lo + Math.floor(Math.random() * (hi - lo + 1));
+    stepsInput.value = String(Math.min(60, Math.max(10, steps)));
+    syncRangeUI(stepsInput, stepsValue, 0);
+  }
+  if (guidanceInput) {
+    const g = 4.5 + Math.random() * 4;
+    const snapped = Math.round(g * 2) / 2;
+    const max = Number.parseFloat(guidanceInput.max);
+    const min = Number.parseFloat(guidanceInput.min);
+    guidanceInput.value = String(Math.min(max, Math.max(min, snapped)));
+    syncRangeUI(guidanceInput, guidanceValue, 1);
+  }
+  if (quickModeInput) quickModeInput.checked = Math.random() < 0.22;
+
+  const posKeys = Object.keys(positivePresets);
+  const negKeys = Object.keys(negativePresets);
+  if (promptInput && posKeys.length) {
+    const k = posKeys[Math.floor(Math.random() * posKeys.length)];
+    promptInput.value = positivePresets[k];
+  }
+  if (negativePromptInput && negKeys.length) {
+    const nk = negKeys[Math.floor(Math.random() * negKeys.length)];
+    negativePromptInput.value = negativePresets[nk];
+  }
+}
+
+async function copySdRecipe() {
+  const sdStyle = sdStyleSelect ? sdStyleSelect.value : "";
+  const sdStyleLabel =
+    sdStyleSelect && sdStyleSelect.selectedIndex >= 0
+      ? sdStyleSelect.options[sdStyleSelect.selectedIndex].text.trim()
+      : "";
+  const payload = {
+    page: "sd-img2img",
+    sdStyle,
+    sdStyleLabel,
+    denoise: denoiseInput ? Number.parseFloat(denoiseInput.value) : null,
+    steps: stepsInput ? Number.parseInt(stepsInput.value, 10) : null,
+    guidance: guidanceInput ? Number.parseFloat(guidanceInput.value) : null,
+    quick: !!(quickModeInput && quickModeInput.checked),
+    prompt: promptInput ? promptInput.value.trim() : "",
+    negative: negativePromptInput ? negativePromptInput.value.trim() : "",
+  };
+  const text = JSON.stringify(payload, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    if (statusText) {
+      const prev = statusText.textContent;
+      statusText.textContent = "📋 配方已复制到剪贴板";
+      setTimeout(() => {
+        if (statusText.textContent === "📋 配方已复制到剪贴板") statusText.textContent = prev;
+      }, 2200);
+    } else {
+      alert("已复制到剪贴板");
+    }
+  } catch (_) {
+    window.prompt("请手动复制：", text);
+  }
+}
+
 function updateQueueBanner() {
   const el = document.getElementById("queue-banner");
   if (!el) return;
@@ -448,6 +537,7 @@ async function pollStatus() {
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
+      playCompleteCelebration();
       if (kind === "batch" && count > 1) showBatchResults(currentJobId, count);
       else showSingleResult(currentJobId);
       return;
@@ -547,6 +637,12 @@ function consumeHistoryPreviewSd() {
 
 if (runBtn) runBtn.addEventListener("click", startSdStyleTransfer);
 if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
+
+const sdRandomParamsBtn = document.getElementById("sd-random-params-btn");
+const sdCopyRecipeBtn = document.getElementById("sd-copy-recipe-btn");
+if (sdRandomParamsBtn) sdRandomParamsBtn.addEventListener("click", randomizeSdParams);
+if (sdCopyRecipeBtn) sdCopyRecipeBtn.addEventListener("click", () => void copySdRecipe());
+
 consumeHistoryApplySd();
 consumeHistoryPreviewSd();
 

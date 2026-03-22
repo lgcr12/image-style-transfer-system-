@@ -52,6 +52,61 @@ function notifyDone(title, body) {
   } catch (_) {}
 }
 
+function playCompleteCelebration() {
+  const el = document.querySelector(".card-output .result-container");
+  if (!el) return;
+  el.classList.remove("celebrate-result");
+  requestAnimationFrame(() => {
+    void el.offsetWidth;
+    el.classList.add("celebrate-result");
+    setTimeout(() => el.classList.remove("celebrate-result"), 2100);
+  });
+}
+
+function randomizeStyleParams() {
+  if (!modelSelect || !modelSelect.options.length) return;
+  const opts = Array.from(modelSelect.options);
+  const pick = opts[Math.floor(Math.random() * opts.length)];
+  modelSelect.value = pick.value;
+  setActiveModelCard(pick.value);
+  if (strengthInput) {
+    const min = Number.parseFloat(strengthInput.min);
+    const max = Number.parseFloat(strengthInput.max);
+    const step = Number.parseFloat(strengthInput.step) || 0.05;
+    const raw = min + Math.random() * (max - min);
+    const snapped = Math.round(raw / step) * step;
+    const clamped = Math.min(max, Math.max(min, snapped));
+    strengthInput.value = String(clamped);
+    syncStrengthUI();
+  }
+}
+
+async function copyStyleRecipe() {
+  const modelKey = modelSelect ? modelSelect.value : "";
+  const modelLabel =
+    modelSelect && modelSelect.selectedIndex >= 0 ? modelSelect.options[modelSelect.selectedIndex].text.trim() : "";
+  const strength = strengthInput ? Number.parseFloat(strengthInput.value) : null;
+  const text = JSON.stringify(
+    { page: "style-transfer", model: modelKey, modelLabel, strength },
+    null,
+    2
+  );
+  try {
+    await navigator.clipboard.writeText(text);
+    if (statusText) {
+      const prev = statusText.textContent;
+      statusText.textContent = "📋 配方已复制到剪贴板";
+      setTimeout(() => {
+        if (statusText.textContent === "📋 配方已复制到剪贴板") statusText.textContent = prev;
+      }, 2200);
+    } else {
+      alert("已复制到剪贴板");
+    }
+  } catch (_) {
+    window.prompt("请手动复制：", text);
+  }
+}
+
 function updateQueueBanner() {
   const el = document.getElementById("queue-banner");
   if (!el) return;
@@ -374,6 +429,7 @@ async function pollStatus() {
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
+      playCompleteCelebration();
       if (kind === "batch" && count > 1) showBatchResults(currentJobId, count);
       else showSingleResult(currentJobId);
       return;
@@ -463,6 +519,12 @@ function consumeHistoryPreviewMain() {
 
 if (runBtn) runBtn.addEventListener("click", startStyleTransfer);
 if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
+
+const randomParamsBtn = document.getElementById("random-params-btn");
+const copyRecipeBtn = document.getElementById("copy-recipe-btn");
+if (randomParamsBtn) randomParamsBtn.addEventListener("click", randomizeStyleParams);
+if (copyRecipeBtn) copyRecipeBtn.addEventListener("click", () => void copyStyleRecipe());
+
 consumeHistoryApplyMain();
 consumeHistoryPreviewMain();
 
