@@ -31,6 +31,12 @@
             <input id="content-input" type="file" accept="image/*" />
             <div class="preview" id="content-preview">点击上传内容图片</div>
           </div>
+          <div class="field" style="margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="upload-downscale-checkbox" />
+              上传前缩小大图（最长边 2048；PNG 仍为 PNG）
+            </label>
+          </div>
           <div class="output-nested sd-output-nested">
             <h2 class="output-nested-heading"><span class="badge">OUTPUT</span> 结果预览</h2>
             <div class="result-container">
@@ -148,6 +154,7 @@
             <div class="fun-actions" role="group" aria-label="趣味快捷">
               <button type="button" id="sd-random-params-btn" class="secondary-btn">🎲 随机参数</button>
               <button type="button" id="sd-copy-recipe-btn" class="secondary-btn">📋 复制配方</button>
+              <button type="button" id="sd-paste-recipe-btn" class="secondary-btn">📥 粘贴配方</button>
             </div>
             <p class="help-text">💡 现在已分为正向和负向两个分类，互不干扰、可分别追加。</p>
           </div>
@@ -161,6 +168,7 @@
 
     <script src="/static/history_local.js"></script>
     <script src="/static/compare_ui.js"></script>
+    <script src="/static/client_helpers.js"></script>
     <script src="/static/sd.js"></script>
   </body>
 </html>

@@ -35,6 +35,10 @@ const PHASE_LABELS = {
   error: "出错",
 };
 
+function nextPollMs() {
+  return typeof ClientHelpers !== "undefined" && ClientHelpers.pollDelayMs ? ClientHelpers.pollDelayMs() : 700;
+}
+
 function formatPhaseLine(data) {
   const code = data.phase || "";
   const tag = PHASE_LABELS[code] || code || "状态";
@@ -105,6 +109,50 @@ async function copyStyleRecipe() {
   } catch (_) {
     window.prompt("请手动复制：", text);
   }
+}
+
+async function pasteStyleRecipe() {
+  let text = "";
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (_) {
+    text = window.prompt("请粘贴配方 JSON：") || "";
+  }
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  let obj;
+  try {
+    obj = JSON.parse(trimmed);
+  } catch (_) {
+    alert("不是有效的 JSON");
+    return;
+  }
+  if (obj.page && obj.page !== "style-transfer") {
+    alert("这是其它页面的配方，请在 SD 页使用「粘贴配方」");
+    return;
+  }
+  const key = obj.model || obj.modelName;
+  if (key && modelSelect) {
+    const found = Array.from(modelSelect.options).some((o) => o.value === key);
+    if (!found) {
+      alert("当前列表中不存在该模型：" + key);
+      return;
+    }
+    modelSelect.value = key;
+    setActiveModelCard(key);
+  }
+  if (strengthInput && obj.strength != null) {
+    const v = Number.parseFloat(obj.strength);
+    if (!Number.isNaN(v)) {
+      const min = Number.parseFloat(strengthInput.min);
+      const max = Number.parseFloat(strengthInput.max);
+      const step = Number.parseFloat(strengthInput.step) || 0.05;
+      const snapped = Math.round(v / step) * step;
+      strengthInput.value = String(Math.min(max, Math.max(min, snapped)));
+      syncStrengthUI();
+    }
+  }
+  if (statusText) statusText.textContent = "已应用粘贴的配方";
 }
 
 function updateQueueBanner() {
@@ -235,6 +283,7 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     const img = document.createElement("img");
     img.src = resultSrc;
     img.alt = altText;
+    img.loading = imageIndex > 0 ? "lazy" : "eager";
     img.style.display = "block";
     wrap.appendChild(img);
   }
@@ -296,10 +345,25 @@ function setCancelEnabled(enabled) {
 async function submitQueueStyleJob() {
   const file = queueFiles[queueIdx];
   if (!file) return;
+  const downCb = document.getElementById("upload-downscale-checkbox");
+  const useDown = !!(downCb && downCb.checked && window.ClientHelpers);
+  const maxEdge = 2048;
+  let contentFile = file;
+  if (useDown) {
+    if (statusText) {
+      statusText.textContent =
+        queueFiles.length > 1 ? `压缩第 ${queueIdx + 1}/${queueFiles.length} 张…` : "正在压缩大图…";
+    }
+    contentFile = await ClientHelpers.downscaleImageFile(file, maxEdge);
+  }
+  let styleFile = styleInput && styleInput.files && styleInput.files[0];
+  if (styleFile && useDown) {
+    styleFile = await ClientHelpers.downscaleImageFile(styleFile, maxEdge);
+  }
   const formData = new FormData();
-  formData.append("content_image", file);
-  if (styleInput && styleInput.files && styleInput.files[0]) {
-    formData.append("style_image", styleInput.files[0]);
+  formData.append("content_image", contentFile);
+  if (styleFile) {
+    formData.append("style_image", styleFile);
   }
   formData.append("model_name", modelSelect.value);
   if (strengthInput) {
@@ -390,21 +454,21 @@ async function pollStatus() {
     if (status === "queued") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(true);
-      pollingTimer = setTimeout(pollStatus, 600);
+      pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "pending") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(false);
-      pollingTimer = setTimeout(pollStatus, 600);
+      pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "running") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(true);
-      pollingTimer = setTimeout(pollStatus, 600);
+      pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
@@ -456,7 +520,7 @@ async function pollStatus() {
     }
 
     // 兜底
-    pollingTimer = setTimeout(pollStatus, 600);
+    pollingTimer = setTimeout(pollStatus, nextPollMs());
   } catch (e) {
     console.error(e);
     statusText.textContent = "查询状态失败";
@@ -522,8 +586,30 @@ if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
 
 const randomParamsBtn = document.getElementById("random-params-btn");
 const copyRecipeBtn = document.getElementById("copy-recipe-btn");
+const pasteRecipeBtn = document.getElementById("paste-recipe-btn");
 if (randomParamsBtn) randomParamsBtn.addEventListener("click", randomizeStyleParams);
 if (copyRecipeBtn) copyRecipeBtn.addEventListener("click", () => void copyStyleRecipe());
+if (pasteRecipeBtn) pasteRecipeBtn.addEventListener("click", () => void pasteStyleRecipe());
+
+(function initUploadDownscalePref() {
+  const cb = document.getElementById("upload-downscale-checkbox");
+  if (!cb) return;
+  try {
+    cb.checked = localStorage.getItem("upload_downscale_pref") === "1";
+  } catch (_) {}
+  cb.addEventListener("change", () => {
+    try {
+      localStorage.setItem("upload_downscale_pref", cb.checked ? "1" : "0");
+    } catch (_) {}
+  });
+})();
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !currentJobId) return;
+  if (pollingTimer) clearTimeout(pollingTimer);
+  pollingTimer = null;
+  void pollStatus();
+});
 
 consumeHistoryApplyMain();
 consumeHistoryPreviewMain();

@@ -44,6 +44,10 @@ const PHASE_LABELS = {
   error: "出错",
 };
 
+function nextPollMs() {
+  return typeof ClientHelpers !== "undefined" && ClientHelpers.pollDelayMs ? ClientHelpers.pollDelayMs() : 700;
+}
+
 function formatPhaseLine(data) {
   const code = data.phase || "";
   const tag = PHASE_LABELS[code] || code || "状态";
@@ -148,6 +152,47 @@ async function copySdRecipe() {
   } catch (_) {
     window.prompt("请手动复制：", text);
   }
+}
+
+async function pasteSdRecipe() {
+  let text = "";
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (_) {
+    text = window.prompt("请粘贴配方 JSON：") || "";
+  }
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  let obj;
+  try {
+    obj = JSON.parse(trimmed);
+  } catch (_) {
+    alert("不是有效的 JSON");
+    return;
+  }
+  if (obj.page && obj.page !== "sd-img2img") {
+    alert("这是其它页面的配方，请在风格迁移页使用「粘贴配方」");
+    return;
+  }
+  const styleKey = obj.sdStyle || obj.sd_style_name;
+  if (styleKey && sdStyleSelect) {
+    const found = Array.from(sdStyleSelect.options).some((o) => o.value === styleKey);
+    if (!found) {
+      alert("当前列表中不存在该 LoRA 组合：" + styleKey);
+      return;
+    }
+  }
+  applySdEntry({
+    type: "sd",
+    sdStyle: styleKey,
+    denoise: obj.denoise,
+    steps: obj.steps,
+    guidance: obj.guidance,
+    quick: obj.quick,
+    prompt: obj.prompt,
+    negative: obj.negative,
+  });
+  if (statusText) statusText.textContent = "已应用粘贴的配方";
 }
 
 function updateQueueBanner() {
@@ -337,6 +382,7 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     const img = document.createElement("img");
     img.src = resultSrc;
     img.alt = altText;
+    img.loading = imageIndex > 0 ? "lazy" : "eager";
     img.style.display = "block";
     wrap.appendChild(img);
   }
@@ -404,8 +450,20 @@ async function submitQueueSdJob() {
   if (promptInput) promptInput.value = posResult.text;
   if (negativePromptInput) negativePromptInput.value = negResult.text;
 
+  const downCb = document.getElementById("upload-downscale-checkbox");
+  const useDown = !!(downCb && downCb.checked && window.ClientHelpers);
+  const maxEdge = 2048;
+  let contentFile = file;
+  if (useDown) {
+    if (statusText) {
+      statusText.textContent =
+        queueFiles.length > 1 ? `压缩第 ${queueIdx + 1}/${queueFiles.length} 张…` : "正在压缩大图…";
+    }
+    contentFile = await ClientHelpers.downscaleImageFile(file, maxEdge);
+  }
+
   const formData = new FormData();
-  formData.append("content_image", file);
+  formData.append("content_image", contentFile);
   formData.append("sd_style_name", sdStyleSelect ? sdStyleSelect.value : "default");
   formData.append("denoising_strength", denoiseInput ? denoiseInput.value : "0.65");
   formData.append("guidance_scale", guidanceInput ? guidanceInput.value : "5.5");
@@ -498,21 +556,21 @@ async function pollStatus() {
     if (status === "queued") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(true);
-      pollingTimer = setTimeout(pollStatus, 600);
+      pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "pending") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(false);
-      pollingTimer = setTimeout(pollStatus, 600);
+      pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "running") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(true);
-      pollingTimer = setTimeout(pollStatus, 600);
+      pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
@@ -563,7 +621,7 @@ async function pollStatus() {
       return;
     }
 
-    pollingTimer = setTimeout(pollStatus, 600);
+    pollingTimer = setTimeout(pollStatus, nextPollMs());
   } catch (e) {
     console.error(e);
     statusText.textContent = "查询状态失败";
@@ -640,8 +698,30 @@ if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
 
 const sdRandomParamsBtn = document.getElementById("sd-random-params-btn");
 const sdCopyRecipeBtn = document.getElementById("sd-copy-recipe-btn");
+const sdPasteRecipeBtn = document.getElementById("sd-paste-recipe-btn");
 if (sdRandomParamsBtn) sdRandomParamsBtn.addEventListener("click", randomizeSdParams);
 if (sdCopyRecipeBtn) sdCopyRecipeBtn.addEventListener("click", () => void copySdRecipe());
+if (sdPasteRecipeBtn) sdPasteRecipeBtn.addEventListener("click", () => void pasteSdRecipe());
+
+(function initUploadDownscalePref() {
+  const cb = document.getElementById("upload-downscale-checkbox");
+  if (!cb) return;
+  try {
+    cb.checked = localStorage.getItem("upload_downscale_pref") === "1";
+  } catch (_) {}
+  cb.addEventListener("change", () => {
+    try {
+      localStorage.setItem("upload_downscale_pref", cb.checked ? "1" : "0");
+    } catch (_) {}
+  });
+})();
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !currentJobId) return;
+  if (pollingTimer) clearTimeout(pollingTimer);
+  pollingTimer = null;
+  void pollStatus();
+});
 
 consumeHistoryApplySd();
 consumeHistoryPreviewSd();
