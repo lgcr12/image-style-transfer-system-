@@ -20,7 +20,7 @@
             <p class="history-page-kicker">仅保存在本机浏览器</p>
             <h1><span class="history-page-title-icon" aria-hidden="true">📜</span> 本地记录</h1>
             <p class="history-page-desc">
-              最近 <strong>20</strong> 条任务摘要；可一键复用参数、回到对应页面查看大图或下载 PNG。
+              横向时间轴 + 缩略图墙浏览最近 <strong>20</strong> 条；点图可回到对应页看大图，或复用参数、下载。
             </p>
           </div>
           <nav class="header-nav-links history-nav-pills" aria-label="页面跳转">
@@ -33,10 +33,13 @@
       <main class="app-main app-main--single">
         <section class="card card-history-page">
           <div class="history-page-list-head">
-            <h2 class="history-list-heading">记录列表</h2>
+            <h2 class="history-list-heading">相册时间轴</h2>
             <span id="history-count" class="history-count-badge" aria-live="polite">—</span>
           </div>
-          <div id="history-list" class="local-history-list"></div>
+          <div class="history-view-wrap">
+            <div id="history-timeline" class="history-timeline" aria-label="按日期跳转"></div>
+            <div id="history-wall" class="history-wall"></div>
+          </div>
         </section>
       </main>
 

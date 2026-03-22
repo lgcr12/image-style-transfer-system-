@@ -1898,6 +1898,10 @@ body.page-history .history-empty-desc {
   vertical-align: top;
 }
 
+.compare-inner.compare-inner--dragging {
+  user-select: none;
+}
+
 .compare-base {
   display: block;
   width: 100%;
@@ -1934,12 +1938,34 @@ body.page-history .history-empty-desc {
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 3px;
-  margin-left: -1.5px;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 12px rgba(99, 102, 241, 0.5);
-  pointer-events: none;
-  z-index: 2;
+  width: 20px;
+  margin-left: -10px;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: auto;
+  cursor: ew-resize;
+  z-index: 4;
+  touch-action: none;
+}
+
+.compare-divider::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 0 14px rgba(99, 102, 241, 0.55),
+    0 0 0 1px rgba(15, 23, 42, 0.25);
+  border-radius: 2px;
+}
+
+.compare-divider:focus-visible {
+  outline: 2px solid #a78bfa;
+  outline-offset: 2px;
 }
 
 .compare-slider {
@@ -2003,4 +2029,184 @@ body.page-history .history-empty-desc {
 
 .compare-wrap.compare--side .compare-divider {
   display: none !important;
+}
+
+/* —— SD 名场面滤镜商店 —— */
+.scene-filter-shop .scene-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.scene-preset-card {
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 114, 182, 0.35);
+  background: rgba(30, 27, 75, 0.55);
+  color: #fdf4ff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+
+.scene-preset-card:hover {
+  border-color: rgba(167, 139, 250, 0.65);
+  box-shadow: 0 0 18px rgba(192, 132, 252, 0.2);
+  transform: translateY(-1px);
+}
+
+.scene-preset-card .scene-preset-title {
+  display: block;
+  font-weight: 800;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.scene-preset-card .scene-preset-desc {
+  display: block;
+  font-size: 11px;
+  color: #c4b5fd;
+  line-height: 1.35;
+  opacity: 0.95;
+}
+
+/* —— 本地记录：时间轴 + 缩略图墙 —— */
+.history-view-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.history-timeline {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 6px 2px 12px;
+  scrollbar-width: thin;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.history-timeline-node {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.5);
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.history-timeline-node:hover,
+.history-timeline-node.is-active {
+  border-color: rgba(244, 114, 182, 0.55);
+  background: rgba(30, 27, 75, 0.75);
+}
+
+.history-timeline-node .history-timeline-count {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a5b4fc;
+}
+
+.history-wall-day {
+  scroll-margin-top: 88px;
+}
+
+.history-wall-day-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #e9d5ff;
+  margin: 8px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-wall-day-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(192, 132, 252, 0.45), transparent);
+}
+
+.history-wall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+}
+
+.history-wall-item {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.6);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.history-wall-item:hover {
+  border-color: rgba(244, 114, 182, 0.45);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.45);
+}
+
+.history-wall-item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  cursor: pointer;
+}
+
+.history-wall-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.history-wall-badge--style {
+  background: rgba(59, 130, 246, 0.85);
+  color: #fff;
+}
+
+.history-wall-badge--sd {
+  background: rgba(244, 114, 182, 0.9);
+  color: #1e1b4b;
+}
+
+.history-wall-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.history-wall-item-actions button,
+.history-wall-item-actions a {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px !important;
+  padding: 5px 6px !important;
+  text-align: center;
+}
+
+.history-wall-item-time {
+  font-size: 10px;
+  color: #94a3b8;
+  padding: 0 8px 6px;
+  line-height: 1.3;
 }

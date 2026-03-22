@@ -243,6 +243,55 @@ const negativePresets = {
   noHires: "(worst quality:1.6, low quality:1.6), (zombie, sketch, interlocked fingers, comic)",
 };
 
+/** 名场面：一键填提示词 + 推荐数值（不改 LoRA） */
+const SCENE_PRESETS = {
+  oil: {
+    title: "油画感",
+    prompt:
+      "masterpiece, oil painting, thick impasto brushstrokes, canvas texture, warm gallery lighting, artistic, rich colors, museum quality, detailed",
+    negative: "photorealistic, plastic skin, flat shading, 3d render, blurry, lowres, jpeg artifacts",
+    denoise: 0.52,
+    steps: 36,
+    guidance: 7.5,
+  },
+  cyber: {
+    title: "赛博霓虹",
+    prompt:
+      "cyberpunk anime, neon pink and cyan lights, rainy street reflections, futuristic city, detailed, cinematic composition, glowing signs",
+    negative: "daylight, natural outdoor, muted colors, blurry, low quality, text watermark",
+    denoise: 0.58,
+    steps: 38,
+    guidance: 8,
+  },
+  ink: {
+    title: "水墨",
+    prompt:
+      "chinese ink wash painting, sumi-e style, flowing brush strokes, mist and negative space, bamboo or mountains, elegant traditional art, monochrome ink",
+    negative: "full color oil, western comic, 3d, photograph, noisy, oversaturated",
+    denoise: 0.45,
+    steps: 34,
+    guidance: 6.5,
+  },
+  sunset: {
+    title: "黄昏动漫",
+    prompt:
+      "golden hour anime, dramatic sunset sky, rim lighting, emotional atmosphere, detailed clouds, soft film grain, cinematic",
+    negative: "harsh flash, overexposed, flat lighting, noon daylight, blurry",
+    denoise: 0.5,
+    steps: 32,
+    guidance: 7,
+  },
+  noir: {
+    title: "黑白映画",
+    prompt:
+      "anime film noir, high contrast black and white, dramatic shadows, spotlight, grainy film texture, moody storytelling",
+    negative: "colorful, saturated, flat gray, low contrast, blurry, lowres",
+    denoise: 0.55,
+    steps: 35,
+    guidance: 7.5,
+  },
+};
+
 /** 一键套系：重绘 / 步数 / CFG（不改 LoRA 与提示词） */
 const SD_PARAM_TRIPLES = {
   light: { denoise: 0.38, steps: 26, guidance: 6 },
@@ -359,6 +408,35 @@ function syncRangeUI(rangeEl, valueEl, digits = 2) {
   valueEl.textContent = Number.isInteger(v) ? String(v) : v.toFixed(digits);
 }
 
+function applyScenePreset(sceneKey) {
+  const p = SCENE_PRESETS[sceneKey];
+  if (!p) return;
+  if (promptInput) promptInput.value = p.prompt;
+  if (negativePromptInput) negativePromptInput.value = p.negative;
+  if (denoiseInput) {
+    const dmin = Number.parseFloat(denoiseInput.min);
+    const dmax = Number.parseFloat(denoiseInput.max);
+    const dv = Math.min(dmax, Math.max(dmin, p.denoise));
+    denoiseInput.value = String(dv);
+    syncRangeUI(denoiseInput, denoiseValue, 2);
+  }
+  if (stepsInput) {
+    const smin = Number.parseInt(stepsInput.min, 10);
+    const smax = Number.parseInt(stepsInput.max, 10);
+    const sv = Math.min(smax, Math.max(smin, p.steps));
+    stepsInput.value = String(sv);
+    syncRangeUI(stepsInput, stepsValue, 0);
+  }
+  if (guidanceInput) {
+    const gmin = Number.parseFloat(guidanceInput.min);
+    const gmax = Number.parseFloat(guidanceInput.max);
+    const gv = Math.min(gmax, Math.max(gmin, p.guidance));
+    guidanceInput.value = String(gv);
+    syncRangeUI(guidanceInput, guidanceValue, 1);
+  }
+  if (statusText) statusText.textContent = `已套用「${p.title}」名场面预设`;
+}
+
 syncRangeUI(denoiseInput, denoiseValue, 2);
 syncRangeUI(stepsInput, stepsValue, 0);
 syncRangeUI(guidanceInput, guidanceValue, 1);
@@ -449,6 +527,37 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     }
   });
   actions.appendChild(copyLinkBtn);
+
+  const shareCardBtn = document.createElement("button");
+  shareCardBtn.type = "button";
+  shareCardBtn.className = "secondary-btn secondary-btn-primary";
+  shareCardBtn.textContent = "分享卡片";
+  shareCardBtn.title = "导出带参数条、水印与二维码的 PNG（生成二维码需短暂联网）";
+  shareCardBtn.addEventListener("click", async () => {
+    if (typeof buildSdShareCard !== "function") {
+      alert("分享模块未加载");
+      return;
+    }
+    shareCardBtn.disabled = true;
+    try {
+      const styleLabel =
+        sdStyleSelect && sdStyleSelect.selectedIndex >= 0
+          ? sdStyleSelect.options[sdStyleSelect.selectedIndex].text.trim()
+          : "";
+      const lines = [
+        styleLabel || "SD img2img",
+        `重绘 ${denoiseInput ? denoiseInput.value : "?"} · ${stepsInput ? stepsInput.value : "?"}步 · CFG ${guidanceInput ? guidanceInput.value : "?"}`,
+      ];
+      const snap = (promptInput && promptInput.value.trim().slice(0, 140)) || "";
+      await buildSdShareCard(jobId, lines, snap);
+    } catch (e) {
+      console.error(e);
+      alert("生成分享卡片失败：" + (e && e.message ? e.message : "未知错误"));
+    } finally {
+      shareCardBtn.disabled = false;
+    }
+  });
+  actions.appendChild(shareCardBtn);
 
   if (imageIndex === 0) {
     const dlCompare = document.createElement("a");
@@ -790,6 +899,10 @@ document.querySelectorAll(".sd-triple-preset").forEach((btn) => {
     if (!key) return;
     applySdParamTriple(key);
   });
+});
+
+document.querySelectorAll(".scene-preset-card").forEach((btn) => {
+  btn.addEventListener("click", () => applyScenePreset(btn.dataset.scene || ""));
 });
 
 consumeHistoryApplySd();

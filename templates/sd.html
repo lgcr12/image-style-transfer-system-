@@ -73,6 +73,35 @@
             </p>
           </div>
 
+          <div class="field scene-filter-shop">
+            <label>🎬 名场面滤镜商店</label>
+            <p class="help-text" style="margin-top: 6px;">
+              点选一套即写入推荐<strong>提示词</strong>与<strong>重绘 / 步数 / CFG</strong>；不改动当前 LoRA 下拉，可再微调。
+            </p>
+            <div class="scene-preset-grid">
+              <button type="button" class="scene-preset-card" data-scene="oil">
+                <span class="scene-preset-title">油画感</span>
+                <span class="scene-preset-desc">厚涂肌理 · 暖光画廊感</span>
+              </button>
+              <button type="button" class="scene-preset-card" data-scene="cyber">
+                <span class="scene-preset-title">赛博霓虹</span>
+                <span class="scene-preset-desc">粉青霓虹 · 雨夜反光</span>
+              </button>
+              <button type="button" class="scene-preset-card" data-scene="ink">
+                <span class="scene-preset-title">水墨</span>
+                <span class="scene-preset-desc">留白晕染 · 写意笔触</span>
+              </button>
+              <button type="button" class="scene-preset-card" data-scene="sunset">
+                <span class="scene-preset-title">黄昏动漫</span>
+                <span class="scene-preset-desc">金色轮廓光 · 氛围天空</span>
+              </button>
+              <button type="button" class="scene-preset-card" data-scene="noir">
+                <span class="scene-preset-title">黑白映画</span>
+                <span class="scene-preset-desc">高对比光影 · 胶片颗粒</span>
+              </button>
+            </div>
+          </div>
+
           <div class="field">
             <label for="denoise-input">🔄 重绘强度（推荐 0.3~0.6，越大越像风格）</label>
             <input id="denoise-input" type="range" min="0.1" max="0.95" step="0.01" value="0.5" />
@@ -179,6 +208,7 @@
     <script src="/static/history_local.js"></script>
     <script src="/static/compare_ui.js"></script>
     <script src="/static/client_helpers.js"></script>
+    <script src="/static/share_card.js"></script>
     <script src="/static/sd.js"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 /**
- * 独立页：展示 localStorage 中的风格 + SD 记录
+ * 本地记录页：时间轴 + 缩略图墙
  */
 function downloadUrlForJob(jobId, label) {
   const p = new URLSearchParams({
@@ -44,20 +44,97 @@ function goViewResult(entry) {
   window.location.href = entry.type === "style" ? "/" : "/sd";
 }
 
+function formatDayHeading(isoDate) {
+  const [y, m, d] = isoDate.split("-").map((x) => Number.parseInt(x, 10));
+  return `${y} 年 ${m} 月 ${d} 日`;
+}
+
+function formatShortDay(isoDate) {
+  const [y, m, d] = isoDate.split("-").map((x) => Number.parseInt(x, 10));
+  const now = new Date();
+  if (y === now.getFullYear()) return `${m}月${d}日`;
+  return `${y}年${m}月${d}日`;
+}
+
+function buildWallItem(item) {
+  const wrap = document.createElement("div");
+  wrap.className = "history-wall-item";
+
+  const badge = document.createElement("span");
+  badge.className =
+    item.type === "style"
+      ? "history-wall-badge history-wall-badge--style"
+      : "history-wall-badge history-wall-badge--sd";
+  badge.textContent = item.type === "style" ? "迁移" : "SD";
+
+  const img = document.createElement("img");
+  img.alt = item.type === "style" ? "风格迁移缩略图" : "SD 结果缩略图";
+  img.loading = "lazy";
+  img.src = `/api/result/${item.jobId}?t=${Date.now()}&index=0`;
+  img.addEventListener("click", () => goViewResult(item));
+  img.addEventListener("error", () => {
+    img.style.opacity = "0.25";
+  });
+
+  const time = document.createElement("div");
+  time.className = "history-wall-item-time";
+  time.textContent = new Date(item.at || Date.now()).toLocaleString();
+
+  const act = document.createElement("div");
+  act.className = "history-wall-item-actions";
+
+  const reuse = document.createElement("button");
+  reuse.type = "button";
+  reuse.className = "secondary-btn";
+  reuse.textContent = "复用";
+  reuse.addEventListener("click", () => goApply(item));
+
+  const view = document.createElement("button");
+  view.type = "button";
+  view.className = "secondary-btn secondary-btn-primary";
+  view.textContent = "查看";
+  view.addEventListener("click", () => goViewResult(item));
+
+  const fileLabel = item.type === "style" ? "style-transfer" : "sd-img2img";
+
+  const dlResult = document.createElement("a");
+  dlResult.href = downloadUrlForJob(item.jobId, fileLabel);
+  dlResult.className = "secondary-btn download-link";
+  dlResult.textContent = "图";
+
+  const dlCompare = document.createElement("a");
+  dlCompare.href = downloadCompareUrlForJob(item.jobId, fileLabel);
+  dlCompare.className = "secondary-btn download-link";
+  dlCompare.textContent = "对比";
+
+  act.appendChild(reuse);
+  act.appendChild(view);
+  act.appendChild(dlResult);
+  act.appendChild(dlCompare);
+
+  wrap.appendChild(badge);
+  wrap.appendChild(img);
+  wrap.appendChild(time);
+  wrap.appendChild(act);
+  return wrap;
+}
+
 function renderHistoryPage() {
-  const historyList = document.getElementById("history-list");
+  const wall = document.getElementById("history-wall");
+  const timeline = document.getElementById("history-timeline");
   const countEl = document.getElementById("history-count");
-  if (!historyList || typeof HistoryLocal === "undefined") return;
+  if (!wall || !timeline || typeof HistoryLocal === "undefined") return;
 
   const items = HistoryLocal.load().slice().sort((a, b) => (b.at || 0) - (a.at || 0));
-  historyList.innerHTML = "";
+  wall.innerHTML = "";
+  timeline.innerHTML = "";
 
   if (countEl) {
     countEl.textContent = items.length ? `共 ${items.length} 条` : "暂无记录";
   }
 
   if (!items.length) {
-    historyList.innerHTML = `
+    wall.innerHTML = `
       <div class="history-empty-state">
         <div class="history-empty-glow" aria-hidden="true"></div>
         <div class="history-empty-icon" aria-hidden="true">📭</div>
@@ -71,86 +148,63 @@ function renderHistoryPage() {
     return;
   }
 
-  for (const item of items) {
-    const row = document.createElement("div");
-    row.className = "local-history-item";
+  const byDay = new Map();
+  for (const it of items) {
+    const d = new Date(it.at || Date.now());
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(it);
+  }
+  const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
-    const badge = document.createElement("span");
-    badge.className =
-      item.type === "style"
-        ? "history-type-badge history-type-badge--style"
-        : "history-type-badge history-type-badge--sd";
-    badge.textContent = item.type === "style" ? "风格迁移" : "SD";
+  function setActiveNode(el) {
+    timeline.querySelectorAll(".history-timeline-node").forEach((n) => n.classList.remove("is-active"));
+    if (el) el.classList.add("is-active");
+  }
 
-    const thumb = document.createElement("img");
-    thumb.className = "local-history-thumb";
-    thumb.alt = "";
-    thumb.loading = "lazy";
-    thumb.src = `/api/result/${item.jobId}?t=${Date.now()}&index=0`;
-    thumb.addEventListener("error", () => {
-      thumb.style.visibility = "hidden";
-    });
-
-    const body = document.createElement("div");
-    body.className = "local-history-body";
-
-    const title = document.createElement("div");
-    title.className = "local-history-title";
-    if (item.type === "style") {
-      title.textContent = `${item.modelName || "?"} · 强度 ${item.strength ?? "-"}`;
-    } else {
-      title.textContent = `${item.sdStyle || "?"} · 重绘 ${item.denoise ?? "-"} · ${item.steps ?? "?"}步`;
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = "history-timeline-node is-active";
+  allBtn.innerHTML = `全部 <span class="history-timeline-count">${items.length}</span>`;
+  allBtn.addEventListener("click", () => {
+    setActiveNode(allBtn);
+    const first = wall.querySelector(".history-wall-day");
+    if (first) {
+      first.scrollIntoView({ behavior: "smooth", block: "start" });
     }
+  });
+  timeline.appendChild(allBtn);
 
-    const time = document.createElement("div");
-    time.className = "local-history-time";
-    time.textContent = new Date(item.at || Date.now()).toLocaleString();
+  for (const day of days) {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "history-timeline-node";
+    node.dataset.day = day;
+    node.innerHTML = `${formatShortDay(day)} <span class="history-timeline-count">${byDay.get(day).length}</span>`;
+    node.addEventListener("click", () => {
+      setActiveNode(node);
+      document.getElementById(`history-day-${day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    timeline.appendChild(node);
+  }
 
-    const act = document.createElement("div");
-    act.className = "local-history-actions";
+  for (const day of days) {
+    const section = document.createElement("section");
+    section.className = "history-wall-day";
+    section.id = `history-day-${day}`;
 
-    const reuse = document.createElement("button");
-    reuse.type = "button";
-    reuse.className = "secondary-btn";
-    reuse.textContent = "复用参数";
-    reuse.addEventListener("click", () => goApply(item));
+    const h = document.createElement("h3");
+    h.className = "history-wall-day-title";
+    h.textContent = `${formatDayHeading(day)} · ${byDay.get(day).length} 条`;
+    section.appendChild(h);
 
-    const view = document.createElement("button");
-    view.type = "button";
-    view.className = "secondary-btn secondary-btn-primary";
-    view.textContent = "查看结果";
-    view.addEventListener("click", () => goViewResult(item));
-
-    const fileLabel = item.type === "style" ? "style-transfer" : "sd-img2img";
-
-    const dlResult = document.createElement("a");
-    dlResult.href = downloadUrlForJob(item.jobId, fileLabel);
-    dlResult.className = "secondary-btn download-link";
-    dlResult.title = "仅包含处理后的结果图";
-    dlResult.textContent = "仅下载结果图";
-
-    const dlCompare = document.createElement("a");
-    dlCompare.href = downloadCompareUrlForJob(item.jobId, fileLabel);
-    dlCompare.className = "secondary-btn secondary-btn-primary download-link";
-    dlCompare.title = "原图与结果左右并排一张图";
-    dlCompare.textContent = "下载对比图";
-
-    act.appendChild(reuse);
-    act.appendChild(view);
-    act.appendChild(dlResult);
-    act.appendChild(dlCompare);
-
-    const head = document.createElement("div");
-    head.className = "local-history-head";
-    head.appendChild(badge);
-    head.appendChild(title);
-    body.appendChild(head);
-    body.appendChild(time);
-    body.appendChild(act);
-
-    row.appendChild(thumb);
-    row.appendChild(body);
-    historyList.appendChild(row);
+    const grid = document.createElement("div");
+    grid.className = "history-wall-grid";
+    for (const item of byDay.get(day)) {
+      grid.appendChild(buildWallItem(item));
+    }
+    section.appendChild(grid);
+    wall.appendChild(section);
   }
 }
 
