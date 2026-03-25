@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 import torch
+from safetensors.torch import load_file as load_safetensors_file
 
 from diffusers import (
     DPMSolverMultistepScheduler,
@@ -20,8 +21,14 @@ AVAILABLE_SD_STYLES: Dict[str, str] = {
     # 你可以在环境变量里把 LoRA 路径指向不同文件，实现不同风格。
     # 这里的“风格名”用来选择启用哪些 LoRA 以及它们的权重。
     "default": "两个 LoRA 都用（0.8 / 0.7）",
-    "lora1": "只用 LoRA1（水彩泼墨画风）",
-    "lora2": "只用 LoRA2（百花缭乱 Midjourney）",
+    "lora1": "水彩泼墨画）",
+    "lora2": "百花缭乱 Midjourney",
+    "kyoto": "京阿尼Kyoto Anime",
+    "shinkai_char": "新海诚Character（0.8）",
+    "shinkai_view": "新海诚 View（0.6~0.8，默认 0.7）",
+    "ukiyo": "浮世绘（0.8）",
+    "shinkai_mix": "Shinkai View + Character + Ukiyo（0.7 / 0.8 / 0.8）",
+    "jojo": "JoJo（推荐 0.6~0.8）",
 }
 
 
@@ -368,6 +375,28 @@ def run_sd_style_transfer(
         if phase_callback is not None:
             phase_callback(phase, detail)
 
+    def _safe_load_lora_weights(
+        pipe_obj: StableDiffusionImg2ImgPipeline,
+        lora_path: Path,
+        *,
+        adapter_name: Optional[str] = None,
+    ) -> None:
+        """
+        兼容部分 LoRA 在旧版 diffusers 下 text-encoder 键不匹配导致的 KeyError。
+        失败时回退为“仅加载 UNet LoRA”。
+        """
+        kwargs = {"adapter_name": adapter_name} if adapter_name is not None else {}
+        try:
+            pipe_obj.load_lora_weights(str(lora_path), **kwargs)
+            return
+        except KeyError:
+            # 回退：过滤掉 text encoder 相关键，保留 UNet 相关键再加载。
+            raw_state = load_safetensors_file(str(lora_path))
+            unet_only = {k: v for k, v in raw_state.items() if k.startswith("lora_unet_")}
+            if not unet_only:
+                raise
+            pipe_obj.load_lora_weights(unet_only, **kwargs)
+
     # 强制在推理入口执行一次补丁（不依赖 pipeline 初始化路径）
     sys.stderr = _SafeStderr(sys.stderr)
     _patch_tqdm_stderr_once()
@@ -386,21 +415,55 @@ def run_sd_style_transfer(
         "SD_LORA_2_PATH",
         r"E:\models\百花缭乱_midjourney 二次元 Lora_v1.0.safetensors",
     ).strip()
+    lora3_path = os.environ.get(
+        "SD_LORA_3_PATH",
+        r"E:\models\kyoto_anime.safetensors",
+    ).strip()
+    lora4_path = os.environ.get(
+        "SD_LORA_4_PATH",
+        r"E:\models\shinkai__Character_v1.0.safetensors",
+    ).strip()
+    lora5_path = os.environ.get(
+        "SD_LORA_5_PATH",
+        r"E:\models\jojo.safetensors",
+    ).strip()
+    lora6_path = os.environ.get(
+        "SD_LORA_6_PATH",
+        r"E:\models\shinkai_view_V1.0.safetensors",
+    ).strip()
+    lora7_path = os.environ.get(
+        "SD_LORA_7_PATH",
+        r"E:\models\ukiyo.safetensors",
+    ).strip()
 
     lora1_file = Path(lora1_path)
     lora2_file = Path(lora2_path)
-    if not lora1_file.exists():
-        raise FileNotFoundError(f"找不到 LoRA：{lora1_file}")
-    if not lora2_file.exists():
-        raise FileNotFoundError(f"找不到 LoRA：{lora2_file}")
+    lora3_file = Path(lora3_path)
+    lora4_file = Path(lora4_path)
+    lora5_file = Path(lora5_path)
+    lora6_file = Path(lora6_path)
+    lora7_file = Path(lora7_path)
 
     # 只加载一次 LoRA（每次 set_adapters 只切换权重）
     # diffusers 的 LoRA 在内部是以 adapter_name 注册的，我们固定命名。
     with _PIPELINE_LOCK:
         # 避免重复 load：通过在模型上挂一个标记判断
         if not getattr(pipe, "_lora_loaded", False):
-            pipe.load_lora_weights(str(lora1_file), adapter_name="lora1")
-            pipe.load_lora_weights(str(lora2_file), adapter_name="lora2")
+            # 仅加载存在的 LoRA，避免本地文件不全时阻塞所有风格。
+            if lora1_file.exists():
+                _safe_load_lora_weights(pipe, lora1_file, adapter_name="lora1")
+            if lora2_file.exists():
+                _safe_load_lora_weights(pipe, lora2_file, adapter_name="lora2")
+            if lora3_file.exists():
+                _safe_load_lora_weights(pipe, lora3_file, adapter_name="kyoto")
+            if lora4_file.exists():
+                _safe_load_lora_weights(pipe, lora4_file, adapter_name="shinkai_char")
+            if lora5_file.exists():
+                _safe_load_lora_weights(pipe, lora5_file, adapter_name="jojo")
+            if lora6_file.exists():
+                _safe_load_lora_weights(pipe, lora6_file, adapter_name="shinkai_view")
+            if lora7_file.exists():
+                _safe_load_lora_weights(pipe, lora7_file, adapter_name="ukiyo")
             setattr(pipe, "_lora_loaded", True)
 
     from PIL import Image
@@ -431,6 +494,9 @@ def run_sd_style_transfer(
         # default 在旧兼容路径下可能双次生成，快速模式下改为单 LoRA 提速
         if sd_style_name == "default":
             sd_style_name = "lora1"
+    elif sd_style_name == "jojo":
+        # JoJo 风格建议重绘幅度低于 0.8，后端做硬限制避免过度重绘。
+        denoise_f = min(denoise_f, 0.79)
 
     # 根据选择启用不同 LoRA 组合：
     # - 新版 diffusers: 使用 set_adapters 做多 LoRA 混合
@@ -439,8 +505,27 @@ def run_sd_style_transfer(
         "default": (["lora1", "lora2"], [0.8, 0.7]),
         "lora1": (["lora1"], [1.0]),
         "lora2": (["lora2"], [1.0]),
+        "kyoto": (["kyoto"], [1.0]),
+        "shinkai_char": (["shinkai_char"], [0.8]),
+        "shinkai_view": (["shinkai_view"], [0.7]),
+        "ukiyo": (["ukiyo"], [0.8]),
+        "shinkai_mix": (["shinkai_view", "shinkai_char", "ukiyo"], [0.7, 0.8, 0.8]),
+        "jojo": (["jojo"], [0.7]),
     }
     adapters, adapter_weights = adapter_config[sd_style_name]
+    adapter_to_file = {
+        "lora1": lora1_file,
+        "lora2": lora2_file,
+        "kyoto": lora3_file,
+        "shinkai_char": lora4_file,
+        "jojo": lora5_file,
+        "shinkai_view": lora6_file,
+        "ukiyo": lora7_file,
+    }
+    missing_files = [a for a in adapters if not adapter_to_file[a].exists()]
+    if missing_files:
+        missing_info = ", ".join(f"{a} -> {adapter_to_file[a]}" for a in missing_files)
+        raise FileNotFoundError(f"所选风格缺少 LoRA 文件：{missing_info}")
 
     def _run_pipe_once(callback_fn=None):
         # 兜底：某些 Windows 终端环境下 tqdm 会对 stderr.flush() 抛 Errno 22
@@ -467,44 +552,76 @@ def run_sd_style_transfer(
     else:
         # 旧版 diffusers 回退路径
         # 1) 如果只选一个 LoRA，直接单次生成
-        if sd_style_name in {"lora1", "lora2"}:
-            target_path = lora1_file if sd_style_name == "lora1" else lora2_file
+        if sd_style_name in {
+            "lora1",
+            "lora2",
+            "kyoto",
+            "shinkai_char",
+            "jojo",
+            "shinkai_view",
+            "ukiyo",
+        }:
+            if sd_style_name == "lora1":
+                target_path = lora1_file
+            elif sd_style_name == "lora2":
+                target_path = lora2_file
+            elif sd_style_name == "shinkai_char":
+                target_path = lora4_file
+            elif sd_style_name == "jojo":
+                target_path = lora5_file
+            elif sd_style_name == "shinkai_view":
+                target_path = lora6_file
+            elif sd_style_name == "ukiyo":
+                target_path = lora7_file
+            else:
+                target_path = lora3_file
+            if not target_path.exists():
+                raise FileNotFoundError(f"找不到 LoRA：{target_path}")
             with _PIPELINE_LOCK:
                 if hasattr(pipe, "unload_lora_weights"):
                     try:
                         pipe.unload_lora_weights()
                     except Exception:
                         pass
-                pipe.load_lora_weights(str(target_path))
+                _safe_load_lora_weights(pipe, target_path)
             result = _run_pipe_once(_callback)
             image_out = result.images[0]
             progress_callback(100)
         else:
-            # 2) default 双 LoRA：分两次生成并按权重融合，保证“可用优先”
-            with _PIPELINE_LOCK:
-                if hasattr(pipe, "unload_lora_weights"):
-                    try:
-                        pipe.unload_lora_weights()
-                    except Exception:
-                        pass
-                pipe.load_lora_weights(str(lora1_file))
-            result1 = _run_pipe_once(None)
-            progress_callback(52)
+            # 2) 旧版 diffusers 不支持 set_adapters 时，回退为“逐 LoRA 生成再加权融合”。
+            #    目前覆盖 default 与 shinkai_mix 两种多 LoRA 组合。
+            if sd_style_name == "default":
+                blend_targets = [(lora1_file, 0.8), (lora2_file, 0.7)]
+            elif sd_style_name == "shinkai_mix":
+                blend_targets = [(lora6_file, 0.7), (lora4_file, 0.8), (lora7_file, 0.8)]
+            else:
+                raise RuntimeError(
+                    "当前 diffusers 版本不支持多 LoRA set_adapters，"
+                    f"且未定义该风格的兼容融合回退：{sd_style_name}"
+                )
 
-            with _PIPELINE_LOCK:
-                if hasattr(pipe, "unload_lora_weights"):
-                    try:
-                        pipe.unload_lora_weights()
-                    except Exception:
-                        pass
-                pipe.load_lora_weights(str(lora2_file))
-            result2 = _run_pipe_once(None)
-            progress_callback(96)
+            blend_images = []
+            total = max(1, len(blend_targets))
+            for i, (target_file, _) in enumerate(blend_targets, start=1):
+                with _PIPELINE_LOCK:
+                    if hasattr(pipe, "unload_lora_weights"):
+                        try:
+                            pipe.unload_lora_weights()
+                        except Exception:
+                            pass
+                _safe_load_lora_weights(pipe, target_file)
+                result_i = _run_pipe_once(None)
+                blend_images.append(result_i.images[0])
+                progress_callback(min(96, int(15 + i / total * 80)))
 
-            img1 = result1.images[0]
-            img2 = result2.images[0]
-            alpha = 0.7 / (0.8 + 0.7)
-            image_out = Image.blend(img1, img2, alpha=alpha)
+            total_w = sum(w for _, w in blend_targets)
+            out = blend_images[0]
+            acc = blend_targets[0][1]
+            for img_i, (_, w_i) in zip(blend_images[1:], blend_targets[1:]):
+                alpha = w_i / max(1e-6, (acc + w_i))
+                out = Image.blend(out, img_i, alpha=alpha)
+                acc += w_i
+            image_out = out
             progress_callback(100)
 
     image_out.save(output_path)

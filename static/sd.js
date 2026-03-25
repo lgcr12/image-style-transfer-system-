@@ -299,6 +299,10 @@ const SD_PARAM_TRIPLES = {
   heavy: { denoise: 0.68, steps: 42, guidance: 8 },
 };
 
+const STYLE_RECOMMENDATIONS = {
+  jojo: { denoise: 0.72, steps: 28, guidance: 7.5 },
+};
+
 function applySdParamTriple(key) {
   const p = SD_PARAM_TRIPLES[key];
   if (!p) return;
@@ -325,6 +329,35 @@ function applySdParamTriple(key) {
   }
   const tripleLabels = { light: "轻触风格", balanced: "均衡默认", heavy: "重风格" };
   if (statusText) statusText.textContent = "已应用「" + (tripleLabels[key] || key) + "」";
+}
+
+function applyStyleRecommendation(styleKey) {
+  const rec = STYLE_RECOMMENDATIONS[styleKey];
+  if (!rec) return;
+  if (denoiseInput) {
+    const dmin = Number.parseFloat(denoiseInput.min);
+    const dmax = Number.parseFloat(denoiseInput.max);
+    const dv = Math.min(dmax, Math.max(dmin, rec.denoise));
+    denoiseInput.value = String(dv);
+    syncRangeUI(denoiseInput, denoiseValue, 2);
+  }
+  if (stepsInput) {
+    const smin = Number.parseInt(stepsInput.min, 10);
+    const smax = Number.parseInt(stepsInput.max, 10);
+    const sv = Math.min(smax, Math.max(smin, rec.steps));
+    stepsInput.value = String(sv);
+    syncRangeUI(stepsInput, stepsValue, 0);
+  }
+  if (guidanceInput) {
+    const gmin = Number.parseFloat(guidanceInput.min);
+    const gmax = Number.parseFloat(guidanceInput.max);
+    const gv = Math.min(gmax, Math.max(gmin, rec.guidance));
+    guidanceInput.value = String(gv);
+    syncRangeUI(guidanceInput, guidanceValue, 1);
+  }
+  if (statusText) {
+    statusText.textContent = "已应用 JoJo 推荐参数（权重 0.6~0.8，步数 25~30，重绘 < 0.8）";
+  }
 }
 
 function appendPromptText(inputEl, chunk) {
@@ -858,6 +891,9 @@ function consumeHistoryPreviewSd() {
 
 if (runBtn) runBtn.addEventListener("click", startSdStyleTransfer);
 if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
+if (sdStyleSelect) {
+  sdStyleSelect.addEventListener("change", () => applyStyleRecommendation(sdStyleSelect.value));
+}
 
 const sdRandomParamsBtn = document.getElementById("sd-random-params-btn");
 const sdCopyRecipeBtn = document.getElementById("sd-copy-recipe-btn");
@@ -907,4 +943,5 @@ document.querySelectorAll(".scene-preset-card").forEach((btn) => {
 
 consumeHistoryApplySd();
 consumeHistoryPreviewSd();
+if (sdStyleSelect) applyStyleRecommendation(sdStyleSelect.value);
 
