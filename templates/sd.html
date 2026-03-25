@@ -137,6 +137,43 @@
           </div>
 
           <div class="field">
+            <label>🧭 智能分析与风格建议</label>
+            <div class="fun-actions sd-triple-row">
+              <button type="button" id="analyze-input-btn" class="secondary-btn">分析输入图</button>
+              <button type="button" id="apply-suggestion-btn" class="secondary-btn secondary-btn-primary">一键应用建议</button>
+            </div>
+            <p id="analyze-result-text" class="help-text">未分析</p>
+          </div>
+
+          <div class="field">
+            <label>🧵 队列控制</label>
+            <div class="fun-actions sd-triple-row">
+              <button type="button" id="pause-job-btn" class="secondary-btn">暂停当前任务</button>
+              <button type="button" id="resume-job-btn" class="secondary-btn">继续当前任务</button>
+              <button type="button" id="cancel-job-btn" class="secondary-btn">取消当前任务</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>📦 批量与导出</label>
+            <div class="fun-actions">
+              <button type="button" id="export-compare-batch-btn" class="secondary-btn">导出批量对比图</button>
+              <button type="button" id="export-nine-grid-btn" class="secondary-btn">导出九宫格</button>
+              <button type="button" id="export-transition-btn" class="secondary-btn">导出前后转场视频</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>🔗 分享中心</label>
+            <div class="fun-actions">
+              <button type="button" id="build-share-card-btn" class="secondary-btn">生成参数卡片+二维码</button>
+              <button type="button" id="build-xhs-cover-btn" class="secondary-btn">导出小红书封面</button>
+              <button type="button" id="build-dy-cover-btn" class="secondary-btn">导出抖音封面</button>
+            </div>
+            <p id="share-result-text" class="help-text">未生成分享内容</p>
+          </div>
+
+          <div class="field">
             <label for="prompt-input">🧠 正向提示词（可选）</label>
             <textarea id="prompt-input" rows="3" placeholder="例如：masterpiece, best quality, anime style, detailed face, clean lineart, soft lighting">masterpiece, best quality, anime style, detailed face, clean lineart, soft lighting</textarea>
           </div>

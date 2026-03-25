@@ -25,6 +25,19 @@ const negativePresetSelect = document.getElementById("negative-preset-select");
 const clearPositiveBtn = document.getElementById("clear-positive-btn");
 const clearNegativeBtn = document.getElementById("clear-negative-btn");
 const resetPromptsBtn = document.getElementById("reset-prompts-btn");
+const analyzeInputBtn = document.getElementById("analyze-input-btn");
+const applySuggestionBtn = document.getElementById("apply-suggestion-btn");
+const analyzeResultText = document.getElementById("analyze-result-text");
+const pauseJobBtn = document.getElementById("pause-job-btn");
+const resumeJobBtn = document.getElementById("resume-job-btn");
+const cancelJobBtn = document.getElementById("cancel-job-btn");
+const exportCompareBatchBtn = document.getElementById("export-compare-batch-btn");
+const exportNineGridBtn = document.getElementById("export-nine-grid-btn");
+const exportTransitionBtn = document.getElementById("export-transition-btn");
+const buildShareCardBtn = document.getElementById("build-share-card-btn");
+const buildXhsCoverBtn = document.getElementById("build-xhs-cover-btn");
+const buildDyCoverBtn = document.getElementById("build-dy-cover-btn");
+const shareResultText = document.getElementById("share-result-text");
 
 /** 下载文件名前缀（与 /api/result 的 label 对应） */
 const PAGE_DOWNLOAD_LABEL = "sd-img2img";
@@ -34,6 +47,8 @@ let pollingTimer = null;
 
 let queueFiles = [];
 let queueIdx = 0;
+let latestAnalyzeSuggestion = null;
+const finishedJobIds = [];
 
 const PHASE_LABELS = {
   pending: "排队",
@@ -220,6 +235,99 @@ function recordSdHistoryJob(jobId) {
     prompt: promptInput ? promptInput.value : "",
     negative: negativePromptInput ? negativePromptInput.value : "",
   });
+  if (!finishedJobIds.includes(jobId)) finishedJobIds.push(jobId);
+}
+
+async function analyzeInputAndSuggest() {
+  if (!contentInput || !contentInput.files || contentInput.files.length === 0) {
+    alert("请先选择内容图像");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("content_image", contentInput.files[0]);
+  const resp = await fetch("/api/analyze-input", { method: "POST", body: fd });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || "分析失败");
+  latestAnalyzeSuggestion = data;
+  if (analyzeResultText) {
+    analyzeResultText.textContent =
+      `建议风格：${data.style_suggestion}，权重区间：${(data.weight_range || []).join("~")}，` +
+      `推荐参数：steps ${data.recommended.steps} / cfg ${data.recommended.guidance} / denoise ${data.recommended.denoise}`;
+  }
+}
+
+function applySuggestion() {
+  if (!latestAnalyzeSuggestion) return;
+  const r = latestAnalyzeSuggestion.recommended || {};
+  if (sdStyleSelect) sdStyleSelect.value = latestAnalyzeSuggestion.style_suggestion || sdStyleSelect.value;
+  if (stepsInput && r.steps != null) {
+    stepsInput.value = String(r.steps);
+    syncRangeUI(stepsInput, stepsValue, 0);
+  }
+  if (guidanceInput && r.guidance != null) {
+    guidanceInput.value = String(r.guidance);
+    syncRangeUI(guidanceInput, guidanceValue, 1);
+  }
+  if (denoiseInput && r.denoise != null) {
+    denoiseInput.value = String(r.denoise);
+    syncRangeUI(denoiseInput, denoiseValue, 2);
+  }
+}
+
+async function queueAction(action) {
+  if (!currentJobId) {
+    alert("当前无任务");
+    return;
+  }
+  const resp = await fetch(`/api/jobs/${currentJobId}/${action}`, { method: "POST" });
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || `操作失败: ${action}`);
+}
+
+async function exportBatch(kind) {
+  if (!finishedJobIds.length) {
+    alert("暂无已完成任务");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("job_ids", finishedJobIds.join(","));
+  const url = kind === "compare" ? "/api/export/compare-batch" : "/api/export/nine-grid";
+  const resp = await fetch(url, { method: "POST", body: fd });
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || "导出失败");
+  alert("导出成功: " + (data.file || (data.files || []).join("\n")));
+}
+
+async function exportTransition() {
+  if (!currentJobId) {
+    alert("当前无任务");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("job_id", currentJobId);
+  const resp = await fetch("/api/export/transition-video", { method: "POST", body: fd });
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || "导出失败");
+  alert("导出成功: " + data.file);
+}
+
+async function buildShare(template) {
+  if (!currentJobId) {
+    alert("当前无任务");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("job_id", currentJobId);
+  fd.append("template", template);
+  const resp = await fetch("/api/share/build", { method: "POST", body: fd });
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || "分享生成失败");
+  if (shareResultText) {
+    shareResultText.textContent = `卡片: ${data.card} | 封面: ${data.cover}`;
+  }
+  try {
+    await navigator.clipboard.writeText(data.copywriting || "");
+  } catch (_) {}
 }
 
 const defaultPositivePrompt =
@@ -891,6 +999,17 @@ function consumeHistoryPreviewSd() {
 
 if (runBtn) runBtn.addEventListener("click", startSdStyleTransfer);
 if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
+if (analyzeInputBtn) analyzeInputBtn.addEventListener("click", () => void analyzeInputAndSuggest().catch((e) => alert(e.message)));
+if (applySuggestionBtn) applySuggestionBtn.addEventListener("click", applySuggestion);
+if (pauseJobBtn) pauseJobBtn.addEventListener("click", () => void queueAction("pause").catch((e) => alert(e.message)));
+if (resumeJobBtn) resumeJobBtn.addEventListener("click", () => void queueAction("resume").catch((e) => alert(e.message)));
+if (cancelJobBtn) cancelJobBtn.addEventListener("click", () => void queueAction("cancel").catch((e) => alert(e.message)));
+if (exportCompareBatchBtn) exportCompareBatchBtn.addEventListener("click", () => void exportBatch("compare").catch((e) => alert(e.message)));
+if (exportNineGridBtn) exportNineGridBtn.addEventListener("click", () => void exportBatch("grid").catch((e) => alert(e.message)));
+if (exportTransitionBtn) exportTransitionBtn.addEventListener("click", () => void exportTransition().catch((e) => alert(e.message)));
+if (buildShareCardBtn) buildShareCardBtn.addEventListener("click", () => void buildShare("xiaohongshu").catch((e) => alert(e.message)));
+if (buildXhsCoverBtn) buildXhsCoverBtn.addEventListener("click", () => void buildShare("xiaohongshu").catch((e) => alert(e.message)));
+if (buildDyCoverBtn) buildDyCoverBtn.addEventListener("click", () => void buildShare("douyin").catch((e) => alert(e.message)));
 if (sdStyleSelect) {
   sdStyleSelect.addEventListener("change", () => applyStyleRecommendation(sdStyleSelect.value));
 }

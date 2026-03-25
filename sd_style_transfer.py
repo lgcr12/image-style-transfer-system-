@@ -5,8 +5,9 @@ import sys
 import contextlib
 import threading
 import io
+import time
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Any
 
 import torch
 from safetensors.torch import load_file as load_safetensors_file
@@ -38,6 +39,12 @@ _TQDM_PATCHED = False
 _DIFFUSERS_TQDM_PATCHED = False
 _DIFFUSERS_PROGRESS_PATCHED = False
 _SAFE_PROGRESS_FILE = None
+_WARMUP_STATUS: dict[str, Any] = {
+    "ready": False,
+    "running": False,
+    "last_elapsed_ms": None,
+    "last_error": None,
+}
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SD_SINGLE_FILE = BASE_DIR / "MeinaMixV12.safetensors"
 DEFAULT_SD_DIFFUSERS_DIR = BASE_DIR / "sd_base_v1_5"
@@ -349,6 +356,40 @@ def _load_pipeline_if_needed(
         return pipe
 
 
+def get_warmup_status() -> dict[str, Any]:
+    return dict(_WARMUP_STATUS)
+
+
+def warmup_pipeline() -> dict[str, Any]:
+    if _WARMUP_STATUS["running"]:
+        return get_warmup_status()
+    t0 = time.time()
+    _WARMUP_STATUS["running"] = True
+    _WARMUP_STATUS["last_error"] = None
+    try:
+        pipe = _load_pipeline_if_needed()
+        from PIL import Image
+
+        dummy = Image.new("RGB", (256, 256), (127, 127, 127))
+        safe_io = _SafeConsoleIO()
+        with contextlib.redirect_stderr(safe_io), contextlib.redirect_stdout(safe_io):
+            _ = pipe(
+                prompt="anime style",
+                negative_prompt="low quality, blurry",
+                image=dummy,
+                strength=0.45,
+                guidance_scale=5.0,
+                num_inference_steps=4,
+            )
+        _WARMUP_STATUS["ready"] = True
+    except Exception as e:  # pragma: no cover
+        _WARMUP_STATUS["last_error"] = f"{type(e).__name__}: {e}"
+    finally:
+        _WARMUP_STATUS["running"] = False
+        _WARMUP_STATUS["last_elapsed_ms"] = int((time.time() - t0) * 1000)
+    return get_warmup_status()
+
+
 def run_sd_style_transfer(
     *,
     sd_style_name: str,
@@ -362,6 +403,8 @@ def run_sd_style_transfer(
     quick_mode: bool,
     progress_callback: Callable[[int], None],
     phase_callback: Optional[Callable[[str, Optional[str]], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    wait_if_paused: Optional[Callable[[], None]] = None,
 ):
     """
     实现目标：
@@ -374,6 +417,12 @@ def run_sd_style_transfer(
     def _ph(phase: str, detail: Optional[str] = None) -> None:
         if phase_callback is not None:
             phase_callback(phase, detail)
+
+    def _check_control() -> None:
+        if wait_if_paused is not None:
+            wait_if_paused()
+        if should_cancel is not None and should_cancel():
+            raise RuntimeError("任务已取消")
 
     def _safe_load_lora_weights(
         pipe_obj: StableDiffusionImg2ImgPipeline,
@@ -475,11 +524,13 @@ def run_sd_style_transfer(
     # 使用 diffusers callback 按采样步更新进度（兼容 0.21.x）
     # 注意：progress_callback 内部如果抛异常（例如取消），这里会中止推理。
     def _callback(step: int, timestep: int, latents: "torch.FloatTensor"):
+        _check_control()
         # step: 从 0 开始，映射到 10..95
         total = max(1, int(num_inference_steps))
         p = int((step + 1) / total * 85) + 10
         progress_callback(min(95, max(0, p)))
 
+    _check_control()
     progress_callback(5)
 
     prompt_text = (prompt or "").strip()
@@ -545,6 +596,7 @@ def run_sd_style_transfer(
 
     image_out = None
     if hasattr(pipe, "set_adapters"):
+        _check_control()
         pipe.set_adapters(adapters, adapter_weights=adapter_weights)
         result = _run_pipe_once(_callback)
         image_out = result.images[0]
@@ -578,6 +630,7 @@ def run_sd_style_transfer(
             if not target_path.exists():
                 raise FileNotFoundError(f"找不到 LoRA：{target_path}")
             with _PIPELINE_LOCK:
+                _check_control()
                 if hasattr(pipe, "unload_lora_weights"):
                     try:
                         pipe.unload_lora_weights()
@@ -604,6 +657,7 @@ def run_sd_style_transfer(
             total = max(1, len(blend_targets))
             for i, (target_file, _) in enumerate(blend_targets, start=1):
                 with _PIPELINE_LOCK:
+                    _check_control()
                     if hasattr(pipe, "unload_lora_weights"):
                         try:
                             pipe.unload_lora_weights()
@@ -625,4 +679,24 @@ def run_sd_style_transfer(
             progress_callback(100)
 
     image_out.save(output_path)
+
+
+def run_sd_style_transfer_candidates(
+    *,
+    candidate_count: int,
+    output_dir: Path,
+    output_prefix: str,
+    **kwargs,
+) -> list[Path]:
+    c = max(1, int(candidate_count))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base_denoise = float(kwargs.get("denoising_strength", 0.6))
+    paths: list[Path] = []
+    for i in range(c):
+        jitter = (i - (c - 1) / 2.0) * 0.03
+        denoise_i = max(0.2, min(0.9, base_denoise + jitter))
+        p = output_dir / f"{output_prefix}_{i:02d}.png"
+        run_sd_style_transfer(output_path=p, denoising_strength=denoise_i, **kwargs)
+        paths.append(p)
+    return paths
 

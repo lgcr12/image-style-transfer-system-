@@ -3,6 +3,9 @@ import uuid
 import traceback
 import re
 import sys
+import json
+import asyncio
+import time
 from html import escape
 from pathlib import Path
 from typing import Dict
@@ -17,19 +20,42 @@ from fastapi import Request
 from PIL import Image
 
 from style_transfer import load_model, run_style_transfer, AVAILABLE_MODELS
-from sd_style_transfer import run_sd_style_transfer, AVAILABLE_SD_STYLES
+from sd_style_transfer import (
+    run_sd_style_transfer,
+    run_sd_style_transfer_candidates,
+    warmup_pipeline,
+    get_warmup_status,
+    AVAILABLE_SD_STYLES,
+)
+from image_analyzer import analyze_image
+from recipe_scorer import score_image
+from job_queue import JobQueue, QueueJob
+from exporter import export_compare_batch, export_nine_grid, export_transition_video
+from share_builder import build_share_card, build_copywriting, build_social_cover
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 RESULT_DIR = BASE_DIR / "results"
+META_DIR = RESULT_DIR / "meta"
+EXPORT_DIR = RESULT_DIR / "exports"
+SHARE_DIR = RESULT_DIR / "share"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 RESULT_DIR.mkdir(exist_ok=True)
+META_DIR.mkdir(parents=True, exist_ok=True)
+EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+SHARE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.on_event("startup")
+async def on_startup():
+    await job_queue.start()
+    asyncio.create_task(asyncio.to_thread(warmup_pipeline))
 
 
 class _SafeStderr:
@@ -67,16 +93,21 @@ if sys.platform.startswith("win"):
 class JobStatus:
     def __init__(self):
         self.progress: int = 0
-        self.status: str = "pending"
+        self.status: str = "queued"
         # 阶段：pending | downloading | loading_model | running | done | error
         self.phase: str = "pending"
         self.phase_detail: str | None = "任务已创建，等待开始"
         self.mode: str | None = None  # style-transfer | sd
         self.result_path: Path | None = None
+        self.result_paths: list[Path] = []
         self.error: str | None = None
+        self.score: dict | None = None
+        self.next_recipe: dict | None = None
+        self.created_at_ms: int = int(time.time() * 1000)
 
 
 jobs: Dict[str, JobStatus] = {}
+job_queue = JobQueue(concurrency=1)
 
 
 def _safe_download_label(label: str | None) -> str:
@@ -115,6 +146,17 @@ def _disk_orig_path(job_id: str) -> Path | None:
     if p.is_file():
         return p
     return None
+
+
+def _meta_path(job_id: str) -> Path:
+    return META_DIR / f"{job_id}.json"
+
+
+def _save_job_meta(job_id: str, payload: dict) -> None:
+    try:
+        _meta_path(job_id).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _build_side_by_side_png_bytes(
@@ -356,6 +398,20 @@ async def api_status(job_id: str):
     job = jobs.get(job_id)
     if job is None:
         return JSONResponse({"error": "无效的任务 ID"}, status_code=404)
+    qj = job_queue.get(job_id)
+    if qj is not None and job.status not in {"finished", "error", "cancelled"}:
+        if qj.status == "queued":
+            job.status = "queued"
+            job.phase = "pending"
+            job.phase_detail = "任务排队中"
+        elif qj.status == "running":
+            job.status = "running"
+        elif qj.status == "paused":
+            job.status = "paused"
+            job.phase = "pending"
+            job.phase_detail = "任务已暂停"
+        elif qj.status == "cancelled":
+            job.status = "cancelled"
 
     return {
         "status": job.status,
@@ -365,6 +421,9 @@ async def api_status(job_id: str):
         "mode": job.mode,
         "error": job.error,
         "has_result": job.result_path is not None,
+        "result_count": len(job.result_paths) if job.result_paths else (1 if job.result_path else 0),
+        "score": job.score,
+        "next_recipe": job.next_recipe,
     }
 
 
@@ -379,10 +438,12 @@ async def api_result(
         description="下载文件名前缀，如 style-transfer、sd-img2img",
     ),
 ):
+    job = jobs.get(job_id)
     path = _disk_result_path(job_id)
+    if job and job.result_paths and 0 <= index < len(job.result_paths):
+        path = job.result_paths[index]
     if path is None:
         return JSONResponse({"error": "结果未就绪"}, status_code=404)
-    _ = index  # 预留批量结果按序号取不同文件
 
     if download:
         prefix = _safe_download_label(label)
@@ -508,6 +569,7 @@ async def api_sd_style_transfer(
     prompt: str = Form(""),
     negative_prompt: str = Form(""),
     quick_mode: bool = Form(False),
+    candidate_count: int = Form(1),
 ):
     """
     使用 Stable Diffusion (img2img) + LoRA 做“动漫风格水彩化”。
@@ -541,28 +603,89 @@ async def api_sd_style_transfer(
             job.progress = max(job.progress, 1)
             job.error = None
 
-            # run_sd_style_transfer 是同步函数；用线程避免阻塞事件循环
-            import asyncio
+            qj = job_queue.get(job_id)
 
-            await asyncio.to_thread(
-                run_sd_style_transfer,
-                sd_style_name=sd_style_name,
-                content_path=content_path,
-                output_path=result_path,
-                denoising_strength=denoising_strength,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                quick_mode=quick_mode,
-                progress_callback=progress_callback,
-                phase_callback=phase_callback,
+            def should_cancel() -> bool:
+                return bool(qj and qj.cancel_flag)
+
+            def wait_if_paused() -> None:
+                while qj and qj.pause_flag and not qj.cancel_flag:
+                    time.sleep(0.2)
+
+            if int(candidate_count) > 1:
+                out_dir = RESULT_DIR / f"{job_id}_cands"
+                paths = await asyncio.to_thread(
+                    run_sd_style_transfer_candidates,
+                    candidate_count=int(candidate_count),
+                    output_dir=out_dir,
+                    output_prefix=job_id,
+                    sd_style_name=sd_style_name,
+                    content_path=content_path,
+                    denoising_strength=denoising_strength,
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=num_inference_steps,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    quick_mode=quick_mode,
+                    progress_callback=progress_callback,
+                    phase_callback=phase_callback,
+                    should_cancel=should_cancel,
+                    wait_if_paused=wait_if_paused,
+                )
+                scored = [(p, score_image(p).as_dict()) for p in paths]
+                scored = sorted(scored, key=lambda x: x[1]["total_score"], reverse=True)
+                best = scored[0]
+                job.result_path = best[0]
+                job.result_paths = [x[0] for x in scored]
+                job.score = best[1]
+                job.next_recipe = best[1].get("recommendation")
+                best[0].replace(result_path)
+            else:
+                await asyncio.to_thread(
+                    run_sd_style_transfer,
+                    sd_style_name=sd_style_name,
+                    content_path=content_path,
+                    output_path=result_path,
+                    denoising_strength=denoising_strength,
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=num_inference_steps,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    quick_mode=quick_mode,
+                    progress_callback=progress_callback,
+                    phase_callback=phase_callback,
+                    should_cancel=should_cancel,
+                    wait_if_paused=wait_if_paused,
+                )
+                job.result_path = result_path
+                job.result_paths = [result_path]
+                s = score_image(result_path).as_dict()
+                job.score = s
+                job.next_recipe = s.get("recommendation")
+
+            if should_cancel():
+                job.status = "cancelled"
+                phase_callback("error", "任务已取消")
+            else:
+                job.status = "finished"
+                job.progress = 100
+                phase_callback("done", "处理完成")
+            _save_job_meta(
+                job_id,
+                {
+                    "job_id": job_id,
+                    "style": sd_style_name,
+                    "params": {
+                        "denoise": denoising_strength,
+                        "guidance": guidance_scale,
+                        "steps": num_inference_steps,
+                        "quick_mode": quick_mode,
+                    },
+                    "score": job.score,
+                    "next_recipe": job.next_recipe,
+                    "results": [str(p) for p in job.result_paths],
+                },
             )
-
-            job.status = "finished"
-            job.result_path = result_path
-            job.progress = 100
-            phase_callback("done", "处理完成")
         except Exception as e:  # pragma: no cover - defensive
             job.status = "error"
             job.phase = "error"
@@ -570,10 +693,205 @@ async def api_sd_style_transfer(
             tb_lines = traceback.format_exc().splitlines()
             job.error = f"{type(e).__name__}: {e}\n" + "\n".join(tb_lines[-15:])
 
-    import asyncio
+    q_job = QueueJob(job_id=job_id, mode="sd", run_coro_factory=run)
+    await job_queue.submit(q_job)
+    return {"job_id": job_id, "status": "queued"}
 
-    asyncio.create_task(run())
-    return {"job_id": job_id}
+
+@app.get("/api/warmup-status")
+async def api_warmup_status():
+    return get_warmup_status()
+
+
+@app.post("/api/analyze-input")
+async def api_analyze_input(content_image: UploadFile = File(...)):
+    temp_id = str(uuid.uuid4())
+    p = UPLOAD_DIR / f"{temp_id}_analyze.png"
+    p.write_bytes(await content_image.read())
+    result = analyze_image(p)
+    return result.as_dict()
+
+
+@app.get("/api/jobs")
+async def api_list_jobs():
+    payload = []
+    for j in job_queue.list_jobs():
+        payload.append(
+            {
+                "job_id": j.job_id,
+                "mode": j.mode,
+                "status": j.status,
+                "created_at": j.created_at,
+                "updated_at": j.updated_at,
+                "error": j.error,
+            }
+        )
+    return {"jobs": payload}
+
+
+@app.get("/api/jobs/{job_id}")
+async def api_get_job(job_id: str):
+    qj = job_queue.get(job_id)
+    if qj is None:
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    return {
+        "job_id": qj.job_id,
+        "status": qj.status,
+        "pause_flag": qj.pause_flag,
+        "cancel_flag": qj.cancel_flag,
+        "error": qj.error,
+    }
+
+
+@app.post("/api/jobs/{job_id}/pause")
+async def api_pause_job(job_id: str):
+    if not job_queue.pause(job_id):
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    job = jobs.get(job_id)
+    if job:
+        job.status = "paused"
+        job.phase = "pending"
+        job.phase_detail = "任务已暂停"
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/resume")
+async def api_resume_job(job_id: str):
+    if not job_queue.resume(job_id):
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    job = jobs.get(job_id)
+    if job and job.status == "paused":
+        job.status = "queued"
+        job.phase = "pending"
+        job.phase_detail = "任务已恢复，等待执行"
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def api_cancel_job(job_id: str):
+    if not job_queue.cancel(job_id):
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    job = jobs.get(job_id)
+    if job:
+        job.status = "cancelled"
+        job.phase = "error"
+        job.phase_detail = "任务已取消"
+    return {"ok": True}
+
+
+@app.post("/api/cancel/{job_id}")
+async def api_cancel_job_compat(job_id: str):
+    return await api_cancel_job(job_id)
+
+
+@app.post("/api/batch-submit")
+async def api_batch_submit(
+    content_images: list[UploadFile] = File(...),
+    sd_style_name: str = Form("default"),
+    denoising_strength: float = Form(0.65),
+    guidance_scale: float = Form(5.5),
+    num_inference_steps: int = Form(30),
+    prompt: str = Form(""),
+    negative_prompt: str = Form(""),
+    quick_mode: bool = Form(False),
+    top_n: int = Form(3),
+):
+    batch_id = str(uuid.uuid4())
+    job_ids: list[str] = []
+    for upload in content_images:
+        resp = await api_sd_style_transfer(
+            content_image=upload,
+            sd_style_name=sd_style_name,
+            denoising_strength=denoising_strength,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            quick_mode=quick_mode,
+            candidate_count=1,
+        )
+        job_ids.append(resp["job_id"])
+    return {"batch_id": batch_id, "job_ids": job_ids, "top_n": max(1, int(top_n))}
+
+
+@app.get("/api/batch/{batch_id}")
+async def api_batch_status(batch_id: str, job_ids: str = Query("")):
+    _ = batch_id
+    ids = [x for x in job_ids.split(",") if x]
+    rows = []
+    for jid in ids:
+        j = jobs.get(jid)
+        if j is None:
+            continue
+        rows.append(
+            {
+                "job_id": jid,
+                "status": j.status,
+                "score": (j.score or {}).get("total_score"),
+                "result": str(j.result_path) if j.result_path else None,
+            }
+        )
+    rows = sorted(rows, key=lambda x: (x["score"] if x["score"] is not None else -1), reverse=True)
+    return {"items": rows}
+
+
+@app.post("/api/export/compare-batch")
+async def api_export_compare_batch(job_ids: str = Form(...)):
+    ids = [x for x in job_ids.split(",") if x]
+    pairs: list[tuple[Path, Path]] = []
+    for jid in ids:
+        o = _disk_orig_path(jid)
+        r = _disk_result_path(jid)
+        if o and r:
+            pairs.append((o, r))
+    out = export_compare_batch(pairs, EXPORT_DIR / f"compare_{int(time.time())}")
+    return {"files": [str(p) for p in out]}
+
+
+@app.post("/api/export/nine-grid")
+async def api_export_nine_grid(job_ids: str = Form(...)):
+    ids = [x for x in job_ids.split(",") if x]
+    imgs: list[Path] = []
+    for jid in ids:
+        r = _disk_result_path(jid)
+        if r:
+            imgs.append(r)
+    out = export_nine_grid(imgs, EXPORT_DIR / f"nine_grid_{int(time.time())}.png")
+    return {"file": str(out)}
+
+
+@app.post("/api/export/transition-video")
+async def api_export_transition(job_id: str = Form(...)):
+    before = _disk_orig_path(job_id)
+    after = _disk_result_path(job_id)
+    if not before or not after:
+        return JSONResponse({"error": "图片不存在"}, status_code=404)
+    out = export_transition_video(before, after, EXPORT_DIR / f"transition_{job_id[:8]}.mp4")
+    return {"file": str(out)}
+
+
+@app.post("/api/share/build")
+async def api_share_build(job_id: str = Form(...), template: str = Form("xiaohongshu")):
+    r = _disk_result_path(job_id)
+    if r is None:
+        return JSONResponse({"error": "结果不存在"}, status_code=404)
+    meta = jobs.get(job_id)
+    params = {
+        "style": "sd",
+        "steps": None,
+        "guidance": None,
+        "denoise": None,
+        "score": (meta.score or {}).get("total_score") if meta else None,
+    }
+    card = build_share_card(
+        r,
+        SHARE_DIR / f"card_{job_id[:8]}.png",
+        params=params,
+        result_url=f"/api/result/{job_id}",
+    )
+    cover = build_social_cover(r, SHARE_DIR / f"cover_{template}_{job_id[:8]}.png", template=template)
+    copy_text = build_copywriting(params)
+    return {"card": str(card), "cover": str(cover), "copywriting": copy_text}
 
 
 if __name__ == "__main__":
