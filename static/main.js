@@ -262,6 +262,203 @@ function clearGallery() {
   if (resultGallery) resultGallery.innerHTML = "";
 }
 
+// ============ 二维码弹窗（扫码下载）===========
+let qrModalSeq = 0;
+let qrModalLastObjUrl = null;
+
+function toAbsUrl(maybeRelativeUrl) {
+  try {
+    return new URL(maybeRelativeUrl, window.location.origin).href;
+  } catch (_) {
+    return String(maybeRelativeUrl || "");
+  }
+}
+
+async function fetchQrObjectUrl(text) {
+  try {
+    // 复用项目里已有的外部 QR 生成服务（参数卡也用它）。
+    const u = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=1&data=${encodeURIComponent(
+      String(text || "")
+    )}`;
+    const r = await fetch(u, { cache: "no-store" });
+    if (!r.ok) return null;
+    const blob = await r.blob();
+    return URL.createObjectURL(blob);
+  } catch (_) {
+    return null;
+  }
+}
+
+function ensureQrModalEl() {
+  let overlay = document.getElementById("qr-download-modal-overlay");
+  if (overlay) return overlay;
+
+  overlay = document.createElement("div");
+  overlay.id = "qr-download-modal-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.background = "rgba(2, 6, 23, 0.62)";
+  overlay.style.backdropFilter = "blur(12px) saturate(1.1)";
+  overlay.style.zIndex = "9999";
+  overlay.style.display = "none";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+
+  const modal = document.createElement("div");
+  modal.style.width = "min(92vw, 520px)";
+  modal.style.background = "linear-gradient(180deg, #0f172a 0%, #0b1220 100%)";
+  modal.style.color = "#e2e8f0";
+  modal.style.borderRadius = "18px";
+  modal.style.border = "1px solid rgba(99, 102, 241, 0.25)";
+  modal.style.boxShadow = "0 18px 80px rgba(0,0,0,0.52), 0 0 0 1px rgba(99, 102, 241, 0.10) inset";
+  modal.style.padding = "20px 18px 16px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.alignItems = "center";
+  header.style.justifyContent = "space-between";
+  header.style.gap = "10px";
+
+  const title = document.createElement("div");
+  title.className = "qr-modal-title";
+  title.style.fontSize = "17px";
+  title.style.fontWeight = "800";
+  title.style.letterSpacing = "0.2px";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.textContent = "关闭";
+  closeBtn.className = "secondary-btn";
+  closeBtn.style.flex = "0 0 auto";
+  closeBtn.addEventListener("click", () => hideQrModal());
+
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+
+  const status = document.createElement("div");
+  status.className = "qr-modal-status";
+  status.style.marginTop = "12px";
+  status.style.opacity = "0.95";
+  status.style.fontSize = "13px";
+
+  const img = document.createElement("img");
+  img.id = "qr-modal-img";
+  img.alt = "二维码";
+  img.style.display = "block";
+  img.style.margin = "14px auto 10px";
+  img.style.width = "252px";
+  img.style.height = "252px";
+  img.style.objectFit = "contain";
+  img.style.borderRadius = "14px";
+  img.style.border = "1px solid rgba(226, 232, 240, 0.18)";
+  img.style.boxShadow = "0 0 0 6px rgba(99, 102, 241, 0.10), 0 12px 40px rgba(0,0,0,0.20)";
+
+  const linkWrap = document.createElement("div");
+  linkWrap.style.fontSize = "13px";
+  linkWrap.style.opacity = "0.92";
+  linkWrap.style.wordBreak = "break-word";
+
+  const link = document.createElement("a");
+  link.className = "qr-modal-link";
+  link.href = "#";
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  linkWrap.textContent = "下载链接：";
+  linkWrap.appendChild(link);
+
+  const hint = document.createElement("div");
+  hint.style.marginTop = "10px";
+  hint.style.opacity = "0.86";
+  hint.style.fontSize = "12.8px";
+  hint.style.lineHeight = "1.45";
+  hint.textContent = "说明：二维码指向“下载接口”。手机扫码后会直接触发下载（可能需要浏览器权限）。";
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.gap = "10px";
+  actions.style.marginTop = "14px";
+  actions.style.flexWrap = "wrap";
+  actions.style.justifyContent = "flex-start";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "secondary-btn";
+  copyBtn.textContent = "复制下载链接";
+  copyBtn.addEventListener("click", async () => {
+    const href = link.href;
+    if (!href || href === "#") return;
+    try {
+      await navigator.clipboard.writeText(href);
+      copyBtn.textContent = "已复制";
+      setTimeout(() => (copyBtn.textContent = "复制下载链接"), 1600);
+    } catch (_) {
+      window.prompt("请手动复制链接：", href);
+    }
+  });
+
+  actions.appendChild(copyBtn);
+
+  modal.appendChild(header);
+  modal.appendChild(status);
+  modal.appendChild(img);
+  modal.appendChild(linkWrap);
+  modal.appendChild(hint);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) hideQrModal();
+  });
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function hideQrModal() {
+  const overlay = document.getElementById("qr-download-modal-overlay");
+  if (!overlay) return;
+  overlay.style.display = "none";
+  const img = document.getElementById("qr-modal-img");
+  if (img) img.src = "";
+  if (qrModalLastObjUrl) URL.revokeObjectURL(qrModalLastObjUrl);
+  qrModalLastObjUrl = null;
+}
+
+async function showQrModalForDownload(titleText, downloadHref) {
+  const overlay = ensureQrModalEl();
+  if (!overlay) return;
+
+  // 每次展示递增序号，避免“快速连点”导致旧请求覆盖新二维码。
+  const seq = ++qrModalSeq;
+
+  const title = overlay.querySelector(".qr-modal-title");
+  const status = overlay.querySelector(".qr-modal-status");
+  const link = overlay.querySelector(".qr-modal-link");
+  const img = overlay.querySelector("#qr-modal-img");
+
+  const absDownloadUrl = toAbsUrl(downloadHref);
+
+  if (title) title.textContent = String(titleText || "二维码");
+  if (status) status.textContent = "正在生成二维码…";
+  if (link) link.href = absDownloadUrl;
+  if (link) link.textContent = absDownloadUrl;
+  if (img) img.src = "";
+
+  overlay.style.display = "flex";
+
+  const objUrl = await fetchQrObjectUrl(absDownloadUrl);
+  if (seq !== qrModalSeq) return;
+
+  if (qrModalLastObjUrl) URL.revokeObjectURL(qrModalLastObjUrl);
+  qrModalLastObjUrl = objUrl;
+
+  if (objUrl && img) {
+    img.src = objUrl;
+    if (status) status.textContent = "二维码已就绪，请使用手机扫码下载";
+  } else {
+    if (status) status.textContent = "二维码生成失败（可能是网络不可用）。请手动打开下载链接。";
+  }
+}
+
 function downloadUrlForJob(jobId, index = 0, label = PAGE_DOWNLOAD_LABEL) {
   const p = new URLSearchParams({
     t: String(Date.now()),
@@ -297,6 +494,17 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     imageIndex > 0 ? `仅下载第 ${imageIndex + 1} 张结果` : "仅下载结果图";
   actions.appendChild(dlResult);
 
+  const qrResultBtn = document.createElement("button");
+  qrResultBtn.type = "button";
+  qrResultBtn.className = "secondary-btn";
+  qrResultBtn.textContent = "结果二维码";
+  qrResultBtn.title = "生成结果图下载二维码（手机扫码即可下载）";
+  const resultDownloadHref = dlResult.href;
+  qrResultBtn.addEventListener("click", async () => {
+    await showQrModalForDownload("结果图二维码", resultDownloadHref);
+  });
+  actions.appendChild(qrResultBtn);
+
   const copyLinkBtn = document.createElement("button");
   copyLinkBtn.type = "button";
   copyLinkBtn.className = "secondary-btn";
@@ -331,6 +539,17 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     dlCompare.title = "原图与结果左右并排一张图";
     dlCompare.textContent = "下载对比图";
     actions.appendChild(dlCompare);
+
+    const qrCompareBtn = document.createElement("button");
+    qrCompareBtn.type = "button";
+    qrCompareBtn.className = "secondary-btn";
+    qrCompareBtn.textContent = "对比二维码";
+    qrCompareBtn.title = "生成对比图下载二维码（手机扫码即可下载）";
+    const compareDownloadHref = dlCompare.href;
+    qrCompareBtn.addEventListener("click", async () => {
+      await showQrModalForDownload("对比图二维码", compareDownloadHref);
+    });
+    actions.appendChild(qrCompareBtn);
   }
 
   wrap.appendChild(actions);

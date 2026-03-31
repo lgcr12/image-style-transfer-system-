@@ -440,6 +440,52 @@ input[type="range"] {
   transition: all 0.2s ease;
 }
 
+/* 更精致的滑块：圆角轨道 + 发光拇指 */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 2px solid rgba(99, 102, 241, 0.55);
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.18), 0 0 0 4px rgba(99, 102, 241, 0.08);
+  margin-top: -7px; /* (thumb height - track height)/2 */
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.05);
+  border-color: rgba(99, 102, 241, 0.75);
+  box-shadow: 0 12px 28px rgba(99, 102, 241, 0.22), 0 0 0 5px rgba(99, 102, 241, 0.12);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 2px solid rgba(99, 102, 241, 0.55);
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.18), 0 0 0 4px rgba(99, 102, 241, 0.08);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="range"]:hover::-moz-range-thumb {
+  transform: scale(1.05);
+  border-color: rgba(99, 102, 241, 0.75);
+  box-shadow: 0 12px 28px rgba(99, 102, 241, 0.22), 0 0 0 5px rgba(99, 102, 241, 0.12);
+}
+
 input[type="range"]:hover {
   accent-color: #764ba2;
 }
@@ -1210,6 +1256,12 @@ input[type="file"]::file-selector-button:hover {
   padding: 7px 11px;
   cursor: pointer;
   transition: all 0.18s ease;
+}
+
+.secondary-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.16);
+  border-color: rgba(99, 102, 241, 0.6);
 }
 
 .secondary-btn:hover {
@@ -2209,4 +2261,183 @@ body.page-history .history-empty-desc {
   color: #94a3b8;
   padding: 0 8px 6px;
   line-height: 1.3;
+}
+
+/* ========== SD 页：交互与视觉收紧（仅样式，不增功能） ========== */
+body.page-sd {
+  font-family: "M PLUS Rounded 1c", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC",
+    "Microsoft YaHei UI", system-ui, sans-serif;
+}
+
+body.page-sd .sd-page-title {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+body.page-sd .sd-lead {
+  max-width: 36rem;
+  margin-left: auto;
+  margin-right: auto;
+  color: #64748b;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+body.page-sd .sd-back-row {
+  margin-top: 14px;
+}
+
+body.page-sd .sd-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6366f1 !important;
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+body.page-sd .sd-back-link::before {
+  content: "←";
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+body.page-sd .sd-back-link:hover {
+  background: rgba(99, 102, 241, 0.14);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.15);
+  border-bottom: none !important;
+}
+
+body.page-sd .header-history-float {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.08);
+  color: #4338ca;
+  backdrop-filter: blur(10px);
+}
+
+body.page-sd .header-history-float:hover {
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 10px 28px rgba(99, 102, 241, 0.18);
+}
+
+body.page-sd .field--checkbox {
+  margin-top: 8px;
+}
+
+body.page-sd .field-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+body.page-sd .field-checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+
+body.page-sd .sd-result-placeholder {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 14px;
+  padding: 2rem 1rem;
+  max-width: 20rem;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+body.page-sd .primary:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: 0 2px 10px rgba(102, 126, 234, 0.2);
+}
+
+body.page-sd .queue-banner {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(238, 242, 255, 0.95), rgba(224, 231, 255, 0.7));
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  color: #3730a3;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+body.page-sd .progress-container {
+  height: 8px;
+  border-radius: 999px;
+}
+
+body.page-sd .card.card-param {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+}
+
+body.page-sd .card.card-param::-webkit-scrollbar {
+  width: 8px;
+}
+
+body.page-sd .card.card-param::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+}
+
+body.page-sd .card.card-param::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* === 简洁高雅：参数滑块三列网格 === */
+body.page-sd .sd-slider-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 2px 0 8px;
+}
+
+body.page-sd .sd-slider-grid .field {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1100px) {
+  body.page-sd .sd-slider-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  body.page-sd .sd-slider-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* === 简洁高雅：三联按钮更对称（自适应网格） === */
+body.page-sd .fun-actions.sd-triple-row {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* === 克制 hover：减少“跳起来”的夸张感 === */
+body.page-sd .card:hover {
+  transform: none;
+  border-color: rgba(99, 102, 241, 0.12);
 }
