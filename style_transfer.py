@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, Dict, Optional, Union
+import json
 
 import torch
 import torch.nn.functional as F
@@ -13,16 +14,31 @@ import cv2
 import numpy as np
 from torchvision import models
 
-# 可在这里挂载不同的风格迁移模型
-AVAILABLE_MODELS: Dict[str, str] = {
-    "animegan_shinkai": "AnimeGANv2 新海诚风格 (ONNX)",
-    "animegan_hayao": "AnimeGANv2 宫崎骏风格 (ONNX)",
-    "animegan_shinkai_face": "AnimeGANv2 人脸增强（不改原效果）",
-    "animegan_hayao_face": "AnimeGANv2 宫崎骏人像增强（人脸更稳）",
-    "cyclegan_g_ab": "CycleGAN G_AB_epoch174 (PTH)",
-    "cyclegan_style_ukiyoe": "CycleGAN 浮世绘风格 (PTH)",
-    "vgg19_neural_style": "VGG19 经典风格迁移（迭代优化）",
-}
+MODEL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "style_models.json"
+
+
+def _load_model_labels() -> Dict[str, str]:
+    fallback = {
+        "animegan_shinkai": "AnimeGANv2 新海诚风格 (ONNX)",
+        "animegan_hayao": "AnimeGANv2 宫崎骏风格 (ONNX)",
+        "animegan_shinkai_face": "AnimeGANv2 人脸增强（不改原效果）",
+        "animegan_hayao_face": "AnimeGANv2 宫崎骏人像增强（人脸更稳）",
+        "cyclegan_g_ab": "CycleGAN G_AB_epoch174 (PTH)",
+        "cyclegan_style_ukiyoe": "CycleGAN 浮世绘风格 (PTH)",
+        "vgg19_neural_style": "VGG19 经典风格迁移（迭代优化）",
+    }
+    try:
+        if MODEL_CONFIG_PATH.is_file():
+            data = json.loads(MODEL_CONFIG_PATH.read_text(encoding="utf-8"))
+            m = data.get("models")
+            if isinstance(m, dict) and m:
+                return {str(k): str(v) for k, v in m.items()}
+    except Exception:
+        pass
+    return fallback
+
+
+AVAILABLE_MODELS: Dict[str, str] = _load_model_labels()
 
 
 def get_device() -> torch.device:

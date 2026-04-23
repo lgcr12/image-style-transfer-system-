@@ -1,0 +1,11 @@
+{
+  "models": {
+    "animegan_shinkai": "AnimeGANv2 新海诚风格 (ONNX)",
+    "animegan_hayao": "AnimeGANv2 宫崎骏风格 (ONNX)",
+    "animegan_shinkai_face": "AnimeGANv2 人脸增强（不改原效果）",
+    "animegan_hayao_face": "AnimeGANv2 宫崎骏人像增强（人脸更稳）",
+    "cyclegan_g_ab": "CycleGAN G_AB_epoch174 (PTH)",
+    "cyclegan_style_ukiyoe": "CycleGAN 浮世绘风格 (PTH)",
+    "vgg19_neural_style": "VGG19 经典风格迁移（迭代优化）"
+  }
+}

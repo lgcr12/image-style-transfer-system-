@@ -6,6 +6,7 @@ import sys
 import json
 import asyncio
 import time
+import os
 from html import escape
 from pathlib import Path
 from typing import Dict
@@ -25,6 +26,7 @@ from sd_style_transfer import (
     run_sd_style_transfer_candidates,
     warmup_pipeline,
     get_warmup_status,
+    get_sd_style_config,
     AVAILABLE_SD_STYLES,
 )
 from image_analyzer import analyze_image
@@ -32,6 +34,7 @@ from recipe_scorer import score_image
 from job_queue import JobQueue, QueueJob
 from exporter import export_compare_batch, export_nine_grid, export_transition_video
 from share_builder import build_share_card, build_copywriting, build_social_cover
+from job_store import JobStore
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -45,6 +48,8 @@ RESULT_DIR.mkdir(exist_ok=True)
 META_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 SHARE_DIR.mkdir(parents=True, exist_ok=True)
+DB_DIR = BASE_DIR / "data"
+DB_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 
@@ -108,6 +113,74 @@ class JobStatus:
 
 jobs: Dict[str, JobStatus] = {}
 job_queue = JobQueue(concurrency=1)
+job_store = JobStore(DB_DIR / "jobs.db")
+
+
+def _diagnose_error(err: str | None) -> dict | None:
+    if not err:
+        return None
+    t = str(err).lower()
+    if "outofmemory" in t or "cuda out of memory" in t or "cudnn" in t:
+        return {
+            "code": "oom",
+            "title": "显存不足",
+            "advice": "建议开启 quick_mode、降低图片分辨率，或调低步数与重绘强度后重试。",
+        }
+    if "model" in t and ("not found" in t or "load" in t or "missing" in t):
+        return {
+            "code": "model_load_failed",
+            "title": "模型加载失败",
+            "advice": "请检查模型文件是否完整，或先等待预热完成后再重试。",
+        }
+    if "size" in t or "dimension" in t or "shape" in t:
+        return {
+            "code": "invalid_image_size",
+            "title": "输入尺寸异常",
+            "advice": "建议将图片最长边缩小到 2048 以内再提交。",
+        }
+    return {
+        "code": "unknown",
+        "title": "未知错误",
+        "advice": "请尝试点击重跑；若仍失败，建议降低参数并重试。",
+    }
+
+
+def _persist_job(job_id: str, params: dict | None = None) -> None:
+    j = jobs.get(job_id)
+    if not j:
+        return
+    content_path = str(UPLOAD_DIR / f"{job_id}_content.png")
+    style_path = str(UPLOAD_DIR / f"{job_id}_style.png")
+    if not Path(content_path).is_file():
+        content_path = None  # type: ignore[assignment]
+    if not Path(style_path).is_file():
+        style_path = None  # type: ignore[assignment]
+    result_path = str(j.result_path) if j.result_path else None
+    result_paths = [str(p) for p in (j.result_paths or [])]
+    payload = {
+        "job_id": job_id,
+        "mode": j.mode or "unknown",
+        "status": j.status,
+        "phase": j.phase,
+        "phase_detail": j.phase_detail,
+        "progress": j.progress,
+        "error": j.error,
+        "score": j.score,
+        "next_recipe": j.next_recipe,
+        "params": params,
+        "content_path": content_path,
+        "style_path": style_path,
+        "result_path": result_path,
+        "result_paths": result_paths,
+        "created_at_ms": j.created_at_ms,
+    }
+    try:
+        old = job_store.get_job(job_id)
+        if old and not params:
+            payload["params"] = old.get("params")
+        job_store.upsert_job(payload)
+    except Exception:
+        pass
 
 
 def _safe_download_label(label: str | None) -> str:
@@ -297,6 +370,16 @@ async def local_history_page(request: Request):
     )
 
 
+@app.get("/gallery", response_class=HTMLResponse)
+async def gallery_page(request: Request):
+    return templates.TemplateResponse("gallery.html", {"request": request})
+
+
+@app.get("/eval-dashboard", response_class=HTMLResponse)
+async def eval_dashboard_page(request: Request):
+    return templates.TemplateResponse("eval_dashboard.html", {"request": request})
+
+
 @app.get("/prompt-guide")
 async def prompt_guide(request: Request):
     guide_path = BASE_DIR / "PROMPT_GUIDE.md"
@@ -328,6 +411,11 @@ async def api_style_transfer(
     job = JobStatus()
     job.mode = "style-transfer"
     jobs[job_id] = job
+    submit_params = {
+        "model_name": model_name,
+        "strength": strength,
+        "has_style_image": style_image is not None,
+    }
 
     content_path = UPLOAD_DIR / f"{job_id}_content.png"
     style_path = (
@@ -378,17 +466,20 @@ async def api_style_transfer(
             job.result_path = result_path
             job.progress = 100
             phase_callback("done", "处理完成")
+            _persist_job(job_id, submit_params)
         except Exception as e:  # pragma: no cover - defensive
             job.status = "error"
             job.phase = "error"
             job.phase_detail = str(e)[:240]
             tb_lines = traceback.format_exc().splitlines()
             job.error = f"{type(e).__name__}: {e}\n" + "\n".join(tb_lines[-15:])
+            _persist_job(job_id, submit_params)
 
     # 在后台任务中运行，避免阻塞请求
     import asyncio
 
     asyncio.create_task(run())
+    _persist_job(job_id, submit_params)
 
     return {"job_id": job_id}
 
@@ -397,7 +488,23 @@ async def api_style_transfer(
 async def api_status(job_id: str):
     job = jobs.get(job_id)
     if job is None:
-        return JSONResponse({"error": "无效的任务 ID"}, status_code=404)
+        disk = job_store.get_job(job_id)
+        if not disk:
+            return JSONResponse({"error": "无效的任务 ID"}, status_code=404)
+        diagnosis = _diagnose_error(disk.get("error"))
+        return {
+            "status": disk.get("status"),
+            "progress": disk.get("progress") or 0,
+            "phase": disk.get("phase"),
+            "phase_detail": disk.get("phase_detail"),
+            "mode": disk.get("mode"),
+            "error": disk.get("error"),
+            "has_result": bool(disk.get("result_path")),
+            "result_count": len(disk.get("result_paths") or []),
+            "score": disk.get("score"),
+            "next_recipe": disk.get("next_recipe"),
+            "diagnosis": diagnosis,
+        }
     qj = job_queue.get(job_id)
     if qj is not None and job.status not in {"finished", "error", "cancelled"}:
         if qj.status == "queued":
@@ -424,6 +531,7 @@ async def api_status(job_id: str):
         "result_count": len(job.result_paths) if job.result_paths else (1 if job.result_path else 0),
         "score": job.score,
         "next_recipe": job.next_recipe,
+        "diagnosis": _diagnose_error(job.error),
     }
 
 
@@ -530,16 +638,140 @@ async def api_compare_download(
 
 
 @app.post("/api/rerun/{job_id}")
-async def api_rerun_not_implemented(job_id: str):
-    """
-    前端 main.js / sd.js 预留了「重跑」调用，但当前后端尚未实现该逻辑。
-    注册此路由可避免误请求时返回 FastAPI 默认的 {\"detail\":\"Not Found\"}。
-    """
-    _ = job_id
-    return JSONResponse(
-        {"error": "当前版本未实现「重跑」接口，请重新上传图片并提交任务"},
-        status_code=501,
-    )
+async def api_rerun(job_id: str):
+    src = job_store.get_job(job_id)
+    if not src:
+        return JSONResponse({"error": "历史任务不存在，无法重跑"}, status_code=404)
+    mode = src.get("mode")
+    params = src.get("params") or {}
+    content_path = Path(str(src.get("content_path") or ""))
+    if not content_path.is_file():
+        return JSONResponse({"error": "原图已缺失，无法重跑"}, status_code=404)
+
+    new_job_id = str(uuid.uuid4())
+    new_job = JobStatus()
+    new_job.mode = mode
+    jobs[new_job_id] = new_job
+    new_content_path = UPLOAD_DIR / f"{new_job_id}_content.png"
+    new_content_path.write_bytes(content_path.read_bytes())
+    new_result_path = RESULT_DIR / f"{new_job_id}_result.png"
+
+    def progress_callback(p: int):
+        new_job.progress = p
+
+    def phase_callback(phase: str, detail: str | None = None):
+        new_job.phase = phase
+        new_job.phase_detail = detail
+
+    if mode == "style-transfer":
+        model_name = str(params.get("model_name") or "adain")
+        strength = float(params.get("strength") or 1.5)
+        style_old = Path(str(src.get("style_path") or ""))
+        style_new: Path | None = None
+        if style_old.is_file():
+            style_new = UPLOAD_DIR / f"{new_job_id}_style.png"
+            style_new.write_bytes(style_old.read_bytes())
+        rerun_params = {
+            "model_name": model_name,
+            "strength": strength,
+            "has_style_image": style_new is not None,
+            "rerun_from": job_id,
+        }
+
+        async def run():
+            try:
+                new_job.status = "running"
+                new_job.progress = 1
+                phase_callback("loading_model", "正在加载风格迁移模型…")
+                model = load_model(model_name)
+                phase_callback("running", "正在执行风格迁移…")
+                await asyncio.to_thread(
+                    run_style_transfer,
+                    model_name,
+                    model,
+                    new_content_path,
+                    style_new,
+                    new_result_path,
+                    strength,
+                    progress_callback,
+                    phase_callback,
+                )
+                new_job.status = "finished"
+                new_job.result_path = new_result_path
+                new_job.progress = 100
+                phase_callback("done", "处理完成")
+            except Exception as e:
+                new_job.status = "error"
+                new_job.phase = "error"
+                new_job.phase_detail = str(e)[:240]
+                new_job.error = f"{type(e).__name__}: {e}"
+            finally:
+                _persist_job(new_job_id, rerun_params)
+
+        asyncio.create_task(run())
+        _persist_job(new_job_id, rerun_params)
+        return {"job_id": new_job_id, "status": "running", "rerun_from": job_id}
+
+    if mode == "sd":
+        sd_style_name = str(params.get("sd_style_name") or "default")
+        denoise = float(params.get("denoising_strength") or 0.65)
+        guidance = float(params.get("guidance_scale") or 5.5)
+        steps = int(params.get("num_inference_steps") or 30)
+        prompt = str(params.get("prompt") or "")
+        negative_prompt = str(params.get("negative_prompt") or "")
+        quick_mode = bool(params.get("quick_mode") or False)
+        rerun_params = {
+            "sd_style_name": sd_style_name,
+            "denoising_strength": denoise,
+            "guidance_scale": guidance,
+            "num_inference_steps": steps,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "quick_mode": quick_mode,
+            "candidate_count": 1,
+            "rerun_from": job_id,
+        }
+
+        async def run():
+            try:
+                new_job.status = "running"
+                new_job.progress = 1
+                await asyncio.to_thread(
+                    run_sd_style_transfer,
+                    sd_style_name=sd_style_name,
+                    content_path=new_content_path,
+                    output_path=new_result_path,
+                    denoising_strength=denoise,
+                    guidance_scale=guidance,
+                    num_inference_steps=steps,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    quick_mode=quick_mode,
+                    progress_callback=progress_callback,
+                    phase_callback=phase_callback,
+                )
+                new_job.result_path = new_result_path
+                new_job.result_paths = [new_result_path]
+                s = score_image(new_result_path).as_dict()
+                new_job.score = s
+                new_job.next_recipe = s.get("recommendation")
+                new_job.status = "finished"
+                new_job.progress = 100
+                phase_callback("done", "处理完成")
+            except Exception as e:
+                new_job.status = "error"
+                new_job.phase = "error"
+                new_job.phase_detail = str(e)[:240]
+                new_job.error = f"{type(e).__name__}: {e}"
+            finally:
+                _persist_job(new_job_id, rerun_params)
+
+        q_job = QueueJob(job_id=new_job_id, mode="sd", run_coro_factory=run)
+        await job_queue.submit(q_job)
+        _persist_job(new_job_id, rerun_params)
+        return {"job_id": new_job_id, "status": "queued", "rerun_from": job_id}
+
+    return JSONResponse({"error": f"暂不支持该任务模式重跑：{mode}"}, status_code=400)
 
 
 @app.get("/bg/{filename}")
@@ -582,6 +814,16 @@ async def api_sd_style_transfer(
     job = JobStatus()
     job.mode = "sd"
     jobs[job_id] = job
+    submit_params = {
+        "sd_style_name": sd_style_name,
+        "denoising_strength": denoising_strength,
+        "guidance_scale": guidance_scale,
+        "num_inference_steps": num_inference_steps,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "quick_mode": quick_mode,
+        "candidate_count": candidate_count,
+    }
 
     content_path = UPLOAD_DIR / f"{job_id}_content.png"
     result_path = RESULT_DIR / f"{job_id}_result.png"
@@ -686,15 +928,18 @@ async def api_sd_style_transfer(
                     "results": [str(p) for p in job.result_paths],
                 },
             )
+            _persist_job(job_id, submit_params)
         except Exception as e:  # pragma: no cover - defensive
             job.status = "error"
             job.phase = "error"
             job.phase_detail = str(e)[:240]
             tb_lines = traceback.format_exc().splitlines()
             job.error = f"{type(e).__name__}: {e}\n" + "\n".join(tb_lines[-15:])
+            _persist_job(job_id, submit_params)
 
     q_job = QueueJob(job_id=job_id, mode="sd", run_coro_factory=run)
     await job_queue.submit(q_job)
+    _persist_job(job_id, submit_params)
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -729,6 +974,95 @@ async def api_list_jobs():
     return {"jobs": payload}
 
 
+@app.get("/api/history")
+async def api_history(
+    mode: str | None = Query(None, description="style-transfer | sd"),
+    score_min: float | None = Query(None),
+    score_max: float | None = Query(None),
+    start_ms: int | None = Query(None),
+    end_ms: int | None = Query(None),
+    q: str | None = Query(None, max_length=120),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    rows = job_store.search_jobs(
+        mode=mode,
+        score_min=score_min,
+        score_max=score_max,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        q=q,
+        limit=limit,
+    )
+    return {"items": rows}
+
+
+@app.get("/api/system-stats")
+async def api_system_stats():
+    queued = 0
+    running = 0
+    paused = 0
+    for qj in job_queue.list_jobs():
+        if qj.status == "queued":
+            queued += 1
+        elif qj.status == "running":
+            running += 1
+        elif qj.status == "paused":
+            paused += 1
+    warmup = get_warmup_status()
+    return {
+        "queue": {"queued": queued, "running": running, "paused": paused},
+        "warmup": warmup,
+        "uptime_hint": "可结合队列长度估算等待时间",
+        "pid": os.getpid(),
+    }
+
+
+@app.get("/api/plugins/sd-styles")
+async def api_sd_style_plugins():
+    cfg = get_sd_style_config()
+    return {"styles": cfg.get("styles") or {}, "adapters": cfg.get("adapters") or {}}
+
+
+@app.get("/api/eval/summary")
+async def api_eval_summary(limit: int = Query(1200, ge=1, le=5000)):
+    return job_store.eval_summary(limit=limit)
+
+
+@app.post("/api/gallery/publish")
+async def api_gallery_publish(
+    job_id: str = Form(...),
+    title: str | None = Form(default=None),
+    anonymous: bool = Form(default=False),
+):
+    src = job_store.get_job(job_id)
+    if not src:
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    if not src.get("result_path"):
+        return JSONResponse({"error": "任务尚无结果图，不能发布"}, status_code=400)
+    job_store.publish_gallery(job_id=job_id, title=title, anonymous=anonymous)
+    return {"ok": True}
+
+
+@app.get("/api/gallery/list")
+async def api_gallery_list(limit: int = Query(100, ge=1, le=500)):
+    items = job_store.list_gallery(limit=limit)
+    out = []
+    for it in items:
+        jid = str(it.get("job_id"))
+        out.append(
+            {
+                "job_id": jid,
+                "title": it.get("title") or "",
+                "anonymous": bool(it.get("anonymous")),
+                "created_at_ms": it.get("created_at_ms"),
+                "mode": it.get("mode"),
+                "score": ((it.get("score") or {}).get("total_score")),
+                "preview_url": f"/api/result/{jid}?t={int(time.time()*1000)}",
+            }
+        )
+    return {"items": out}
+
+
 @app.get("/api/jobs/{job_id}")
 async def api_get_job(job_id: str):
     qj = job_queue.get(job_id)
@@ -752,6 +1086,7 @@ async def api_pause_job(job_id: str):
         job.status = "paused"
         job.phase = "pending"
         job.phase_detail = "任务已暂停"
+        _persist_job(job_id)
     return {"ok": True}
 
 
@@ -764,6 +1099,7 @@ async def api_resume_job(job_id: str):
         job.status = "queued"
         job.phase = "pending"
         job.phase_detail = "任务已恢复，等待执行"
+        _persist_job(job_id)
     return {"ok": True}
 
 
@@ -776,6 +1112,7 @@ async def api_cancel_job(job_id: str):
         job.status = "cancelled"
         job.phase = "error"
         job.phase_detail = "任务已取消"
+        _persist_job(job_id)
     return {"ok": True}
 
 
@@ -858,6 +1195,55 @@ async def api_export_nine_grid(job_ids: str = Form(...)):
             imgs.append(r)
     out = export_nine_grid(imgs, EXPORT_DIR / f"nine_grid_{int(time.time())}.png")
     return {"file": str(out)}
+
+
+@app.post("/api/export/batch-report")
+async def api_export_batch_report(job_ids: str = Form(...)):
+    ids = [x for x in job_ids.split(",") if x]
+    rows = []
+    for jid in ids:
+        j = jobs.get(jid)
+        if not j:
+            disk = job_store.get_job(jid)
+            if not disk:
+                rows.append({"job_id": jid, "status": "missing"})
+                continue
+            rows.append(
+                {
+                    "job_id": jid,
+                    "status": disk.get("status"),
+                    "score": (disk.get("score") or {}).get("total_score"),
+                    "params": disk.get("params") or {},
+                    "result": disk.get("result_path"),
+                    "error": disk.get("error"),
+                }
+            )
+            continue
+        rows.append(
+            {
+                "job_id": jid,
+                "status": j.status,
+                "score": (j.score or {}).get("total_score"),
+                "params": (job_store.get_job(jid) or {}).get("params") or {},
+                "result": str(j.result_path) if j.result_path else None,
+                "error": j.error,
+            }
+        )
+    rows = sorted(rows, key=lambda x: (x.get("score") if x.get("score") is not None else -1), reverse=True)
+    best = rows[0] if rows else None
+    report_path = EXPORT_DIR / f"batch_report_{int(time.time())}.md"
+    lines = ["# 批处理报告", ""]
+    if best:
+        lines.append(f"- 最佳任务: `{best.get('job_id')}`")
+        lines.append(f"- 最佳分数: `{best.get('score')}`")
+        lines.append("")
+    lines.append("## 明细")
+    for r in rows:
+        lines.append(
+            f"- {r.get('job_id')} | status={r.get('status')} | score={r.get('score')} | result={r.get('result')} | error={r.get('error') or '-'}"
+        )
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return {"best": best, "items": rows, "report_file": str(report_path)}
 
 
 @app.post("/api/export/transition-video")

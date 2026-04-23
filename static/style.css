@@ -2441,3 +2441,1240 @@ body.page-sd .card:hover {
   transform: none;
   border-color: rgba(99, 102, 241, 0.12);
 }
+
+.history-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.history-filters input,
+.history-filters select {
+  width: 100%;
+}
+
+/* ===== Ethereal Flow 2026 workspace refresh ===== */
+:root {
+  --eth-bg: #f3f4f7;
+  --eth-surface: rgba(255, 255, 255, 0.82);
+  --eth-surface-strong: rgba(255, 255, 255, 0.94);
+  --eth-border: rgba(26, 26, 28, 0.08);
+  --eth-border-strong: rgba(45, 91, 255, 0.18);
+  --eth-text: #1a1a1c;
+  --eth-text-soft: #60646f;
+  --eth-muted: #8e8e93;
+  --eth-primary: #2d5bff;
+  --eth-primary-soft: rgba(45, 91, 255, 0.1);
+  --eth-coral: #ff6b6b;
+  --eth-shadow: 0 20px 50px rgba(20, 24, 40, 0.08);
+  --eth-shadow-soft: 0 10px 24px rgba(20, 24, 40, 0.06);
+  --eth-radius: 24px;
+}
+
+body.page-index,
+body.page-sd {
+  font-family: "Inter", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+  color: var(--eth-text);
+  background:
+    radial-gradient(circle at top left, rgba(45, 91, 255, 0.08), transparent 32%),
+    radial-gradient(circle at right 20%, rgba(255, 107, 107, 0.08), transparent 25%),
+    linear-gradient(180deg, #fbfbfd 0%, var(--eth-bg) 100%);
+  background-attachment: fixed;
+}
+
+body.page-index::before,
+body.page-sd::before {
+  display: none;
+}
+
+body.page-index .app,
+body.page-sd .app {
+  position: relative;
+}
+
+body.page-index .app::before,
+body.page-sd .app::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.45;
+  background-image:
+    linear-gradient(rgba(26, 26, 28, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26, 26, 28, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-mask-image: radial-gradient(circle at center, black 35%, transparent 90%);
+  mask-image: radial-gradient(circle at center, black 35%, transparent 90%);
+}
+
+body.page-index .app > *,
+body.page-sd .app > * {
+  position: relative;
+  z-index: 1;
+}
+
+body.page-index .app-header,
+body.page-sd .app-header {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 28px 28px 18px 96px;
+  text-align: left;
+}
+
+.ethereal-topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.ethereal-brand {
+  max-width: 760px;
+}
+
+.ethereal-brand-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(26, 26, 28, 0.05);
+  color: var(--eth-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body.page-index .app-header h1,
+body.page-sd .app-header h1 {
+  margin: 14px 0 10px;
+  color: var(--eth-text);
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  filter: none;
+  font-size: clamp(2rem, 3.4vw, 3.75rem);
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+body.page-index .app-header p,
+body.page-sd .app-header p {
+  color: var(--eth-text-soft);
+  text-shadow: none;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.ethereal-topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  max-width: 420px;
+}
+
+.ethereal-pill-link,
+body.page-sd .sd-back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(26, 26, 28, 0.08) !important;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--eth-text) !important;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: var(--eth-shadow-soft);
+}
+
+.ethereal-pill-link:hover,
+body.page-sd .sd-back-link:hover {
+  color: var(--eth-primary) !important;
+  border-color: rgba(45, 91, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 14px 30px rgba(45, 91, 255, 0.12);
+}
+
+body.page-sd .sd-back-link::before {
+  content: none;
+}
+
+body.page-index .header-history-float,
+body.page-sd .header-history-float {
+  top: 30px;
+  left: 28px;
+  width: auto;
+  min-width: 56px;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(26, 26, 28, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--eth-text);
+  box-shadow: var(--eth-shadow-soft);
+}
+
+.ethereal-shell {
+  max-width: 1480px;
+  margin: 0 auto 40px;
+  padding: 0 28px 40px;
+}
+
+body.page-index .app-main.ethereal-shell,
+body.page-sd .app-main.ethereal-shell {
+  display: block;
+  max-width: 1480px;
+  margin: 0 auto 40px;
+  padding: 0 28px 40px;
+}
+
+.ethereal-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 280px));
+  justify-content: start;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.ethereal-overview-card {
+  padding: 18px 20px;
+  border: 1px solid rgba(26, 26, 28, 0.07);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: var(--eth-shadow-soft);
+  backdrop-filter: blur(16px);
+}
+
+.ethereal-overview-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--eth-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ethereal-overview-card strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--eth-text);
+}
+
+.ethereal-overview-card p {
+  margin: 8px 0 0;
+  color: var(--eth-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ethereal-overview-card--metric {
+  background: linear-gradient(180deg, rgba(45, 91, 255, 0.08), rgba(255, 255, 255, 0.82));
+}
+
+.ethereal-workbench {
+  display: grid;
+  gap: 18px;
+  align-items: start;
+}
+
+.ethereal-workbench--index {
+  grid-template-columns: minmax(340px, 400px) minmax(0, 1fr);
+}
+
+.ethereal-workbench--sd {
+  grid-template-columns: minmax(760px, 1.35fr) minmax(380px, 460px);
+}
+
+.ethereal-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ethereal-panel {
+  border: 1px solid var(--eth-border);
+  border-radius: var(--eth-radius);
+  background: var(--eth-surface);
+  box-shadow: var(--eth-shadow);
+  backdrop-filter: blur(20px);
+  padding: 22px;
+}
+
+.ethereal-panel::before,
+.ethereal-panel::after {
+  display: none;
+}
+
+.ethereal-panel:hover {
+  transform: none;
+  box-shadow: 0 24px 54px rgba(20, 24, 40, 0.1);
+}
+
+.ethereal-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.ethereal-section-head h2,
+.ethereal-stage-top h2 {
+  margin: 10px 0 0;
+  font-size: 24px;
+  line-height: 1.1;
+  color: var(--eth-text);
+  text-shadow: none;
+}
+
+.ethereal-section-step {
+  flex: 0 0 auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--eth-muted);
+}
+
+.ethereal-section-copy {
+  margin: 0 0 14px;
+  color: var(--eth-text-soft);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+body.page-index .badge,
+body.page-sd .badge {
+  background: rgba(45, 91, 255, 0.08);
+  color: var(--eth-primary);
+  border: none;
+  box-shadow: none;
+}
+
+body.page-index .badge::before,
+body.page-sd .badge::before {
+  width: 7px;
+  height: 7px;
+  background: var(--eth-primary);
+  box-shadow: none;
+}
+
+.ethereal-model-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ethereal-model-card {
+  width: 100%;
+  padding: 14px;
+  border: 1px solid rgba(26, 26, 28, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--eth-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ethereal-model-card:hover,
+.ethereal-model-card.active {
+  border-color: rgba(45, 91, 255, 0.28);
+  background: rgba(45, 91, 255, 0.07);
+  box-shadow: 0 12px 26px rgba(45, 91, 255, 0.12);
+}
+
+.ethereal-model-card-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.ethereal-model-card-meta {
+  display: block;
+  margin-top: 8px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--eth-muted);
+  font-size: 11px;
+}
+
+.ethereal-native-select label,
+.ethereal-slot-head label,
+.ethereal-group label,
+.ethereal-slider-field label {
+  color: var(--eth-text);
+  font-weight: 600;
+}
+
+body.page-index select,
+body.page-sd select,
+body.page-sd textarea,
+body.page-index input[type="file"],
+body.page-sd input[type="file"] {
+  border-radius: 16px;
+  border: 1px solid rgba(26, 26, 28, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--eth-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+body.page-sd textarea {
+  min-height: 104px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+body.page-index select:focus,
+body.page-sd select:focus,
+body.page-sd textarea:focus {
+  border-color: rgba(45, 91, 255, 0.3);
+  box-shadow: 0 0 0 4px rgba(45, 91, 255, 0.08);
+}
+
+.ethereal-dual-slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ethereal-slot {
+  margin: 0;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(26, 26, 28, 0.06);
+  background: rgba(246, 247, 251, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.ethereal-slot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ethereal-slot-head span {
+  color: var(--eth-muted);
+  font-size: 12px;
+}
+
+body.page-index .preview,
+body.page-sd .preview {
+  min-height: 170px;
+  border: 1px solid rgba(26, 26, 28, 0.06);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(241, 243, 248, 0.96));
+  color: var(--eth-muted);
+  box-shadow: inset 0 2px 8px rgba(20, 24, 40, 0.04);
+}
+
+.ethereal-slot--single .preview {
+  min-height: 220px;
+}
+
+.ethereal-check-row {
+  margin-top: 12px;
+}
+
+body.page-index .field-checkbox-label,
+body.page-sd .field-checkbox-label {
+  color: var(--eth-text-soft);
+}
+
+body.page-index .field-checkbox-label input[type="checkbox"],
+body.page-sd .field-checkbox-label input[type="checkbox"] {
+  accent-color: var(--eth-primary);
+}
+
+.ethereal-slider-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0;
+  color: var(--eth-muted);
+  font-size: 12px;
+}
+
+body.page-index .strength-value,
+body.page-sd .strength-value {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--eth-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+body.page-index input[type="range"],
+body.page-sd input[type="range"] {
+  accent-color: var(--eth-primary);
+}
+
+body.page-index .secondary-btn,
+body.page-sd .secondary-btn {
+  border-radius: 14px;
+  border: 1px solid rgba(26, 26, 28, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--eth-text);
+  box-shadow: none;
+}
+
+body.page-index .secondary-btn:hover,
+body.page-sd .secondary-btn:hover {
+  border-color: rgba(45, 91, 255, 0.18);
+  background: rgba(45, 91, 255, 0.07);
+  color: var(--eth-primary);
+}
+
+body.page-index .primary,
+body.page-sd .primary {
+  min-height: 52px;
+  border-radius: 16px;
+  border: none;
+  background: linear-gradient(135deg, #2d5bff 0%, #4478ff 100%);
+  box-shadow: 0 18px 30px rgba(45, 91, 255, 0.2);
+}
+
+.ethereal-inline-actions,
+.fun-actions {
+  gap: 10px;
+}
+
+.ethereal-stage {
+  min-width: 0;
+}
+
+.ethereal-workbench--sd .ethereal-stage {
+  min-width: 0;
+}
+
+.ethereal-stage-panel {
+  padding: 24px;
+}
+
+body.page-sd .ethereal-stage-panel {
+  min-height: calc(100vh - 240px);
+}
+
+.ethereal-stage-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.ethereal-stage-chip-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ethereal-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(26, 26, 28, 0.05);
+  color: var(--eth-text-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+body.page-index .result-container,
+body.page-sd .result-container {
+  position: relative;
+  min-height: 520px;
+  border-radius: 28px;
+  border: 1px solid rgba(26, 26, 28, 0.08);
+  background: linear-gradient(180deg, rgba(252, 252, 253, 0.96), rgba(244, 245, 248, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 20px 40px rgba(20, 24, 40, 0.08);
+  overflow: hidden;
+}
+
+body.page-sd .sd-output-nested .result-container {
+  min-height: 640px;
+}
+
+.ethereal-canvas-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(26, 26, 28, 0.12) 0.8px, transparent 0.8px);
+  background-size: 20px 20px;
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+body.page-index #result-gallery,
+body.page-sd #result-gallery {
+  position: relative;
+  z-index: 1;
+  padding: 24px;
+}
+
+body.page-index #result-placeholder,
+body.page-sd #result-placeholder {
+  z-index: 1;
+  color: var(--eth-muted);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+body.page-index .result-container img,
+body.page-sd .result-container img {
+  border-radius: 20px;
+  box-shadow: 0 18px 40px rgba(20, 24, 40, 0.14);
+}
+
+.ethereal-stage-actions {
+  margin-top: 18px;
+}
+
+body.page-index .status-text,
+body.page-sd .status-text,
+body.page-index .help-text,
+body.page-sd .help-text {
+  color: var(--eth-text-soft);
+}
+
+body.page-index .progress-container,
+body.page-sd .progress-container {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(26, 26, 28, 0.06);
+}
+
+body.page-index .progress-bar,
+body.page-sd .progress-bar {
+  background: linear-gradient(90deg, var(--eth-primary), #3fd0c9);
+  border-radius: 999px;
+}
+
+body.page-index .queue-banner,
+body.page-sd .queue-banner {
+  border-radius: 14px;
+  background: rgba(45, 91, 255, 0.08);
+  color: var(--eth-primary);
+  border: 1px solid rgba(45, 91, 255, 0.14);
+}
+
+.ethereal-panel--stacked {
+  gap: 0;
+}
+
+.ethereal-group {
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid rgba(26, 26, 28, 0.06);
+}
+
+.ethereal-group:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.ethereal-group-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ethereal-group-title span {
+  color: var(--eth-text);
+  font-weight: 700;
+}
+
+.ethereal-group-title small {
+  color: var(--eth-muted);
+  font-size: 12px;
+}
+
+body.page-sd .card.card-param {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+body.page-sd .scene-preset-card,
+body.page-sd .prompt-helper-col,
+body.page-sd .prompt-helper {
+  background: rgba(248, 249, 252, 0.9);
+  border-color: rgba(26, 26, 28, 0.08);
+}
+
+body.page-sd .quick-chips button {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(26, 26, 28, 0.08);
+  color: var(--eth-text-soft);
+}
+
+body.page-sd .quick-chips button:hover {
+  color: var(--eth-primary);
+  border-color: rgba(45, 91, 255, 0.18);
+}
+
+body.page-index .app-footer,
+body.page-sd .app-footer {
+  color: var(--eth-muted);
+  text-shadow: none;
+  font-size: 13px;
+  padding: 8px 24px 24px;
+}
+
+@media (max-width: 1180px) {
+  .ethereal-overview {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ethereal-workbench--index,
+  .ethereal-workbench--sd {
+    grid-template-columns: 1fr;
+  }
+
+  body.page-sd .card.card-param {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 820px) {
+  body.page-index .app-header,
+  body.page-sd .app-header {
+    padding: 88px 16px 16px;
+  }
+
+  body.page-index .header-history-float,
+  body.page-sd .header-history-float {
+    top: 20px;
+    left: 16px;
+  }
+
+  .ethereal-topbar {
+    flex-direction: column;
+  }
+
+  .ethereal-topbar-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .ethereal-shell {
+    padding: 0 16px 28px;
+  }
+
+  body.page-index .app-main.ethereal-shell,
+  body.page-sd .app-main.ethereal-shell {
+    padding: 0 16px 28px;
+  }
+
+  .ethereal-dual-slots,
+  .ethereal-model-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .ethereal-overview {
+    grid-template-columns: 1fr;
+  }
+
+  body.page-index .result-container,
+  body.page-sd .result-container {
+    min-height: 360px;
+  }
+}
+
+/* ===== Ethereal Flow patch layer ===== */
+.hidden {
+  display: none !important;
+}
+
+.canvas-bg {
+  background-color: #f7f7f9 !important;
+  background-image: radial-gradient(rgba(226, 232, 240, 0.95) 1px, transparent 1px) !important;
+  background-size: 32px 32px !important;
+}
+
+.status-text,
+.progress-val,
+.param-num,
+.strength-value,
+.ethereal-stage-chip,
+.ethereal-model-card-meta {
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: -0.02em;
+}
+
+.sidebar-section {
+  position: relative;
+}
+
+.sidebar-section + .sidebar-section,
+.ethereal-group + .ethereal-group {
+  border-top: 0.5px solid rgba(0, 0, 0, 0.08);
+}
+
+.custom-upload-shell {
+  cursor: pointer;
+}
+
+.ethereal-native-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.custom-upload-box {
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 4px 14px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+
+.custom-upload-shell:hover .custom-upload-box {
+  border-color: rgba(45, 91, 255, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 244, 255, 0.98));
+}
+
+.processing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.34);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.processing-overlay::after {
+  content: "";
+  position: absolute;
+  inset: -20% 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(45, 91, 255, 0.05) 25%,
+    rgba(45, 91, 255, 0.22) 50%,
+    rgba(63, 208, 201, 0.12) 65%,
+    transparent 100%
+  );
+  animation: etherealScan 1.8s linear infinite;
+}
+
+@keyframes etherealScan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+body.page-index #run-btn,
+body.page-sd #run-btn {
+  background: #2d5bff;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.2s ease;
+  box-shadow: 0 4px 12px rgba(45, 91, 255, 0.15);
+}
+
+body.page-index #run-btn:hover,
+body.page-sd #run-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(45, 91, 255, 0.25);
+}
+
+body.page-index .progress-container,
+body.page-sd .progress-container {
+  height: 2px;
+  border-radius: 999px;
+}
+
+/* ===== SD Ethereal v2 ===== */
+body.page-sd-ethereal-v2 {
+  margin: 0;
+  background: #f7f7f9;
+  color: #111827;
+  overflow: hidden;
+}
+
+body.page-sd-ethereal-v2 .sd-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar {
+  height: 56px;
+  display: grid;
+  grid-template-columns: 320px 1fr 320px;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px);
+  border-bottom: 0.5px solid rgba(148, 163, 184, 0.4);
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-brand,
+body.page-sd-ethereal-v2 .sd-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-center {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #2d5bff, #77a3ff);
+  transform: rotate(45deg);
+  flex: 0 0 auto;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-name span {
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-actions {
+  justify-content: flex-end;
+}
+
+body.page-sd-ethereal-v2 .sd-topbar-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 0.5px solid rgba(148, 163, 184, 0.45);
+  background: rgba(255, 255, 255, 0.78);
+  color: #475569;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+body.page-sd-ethereal-v2 .sd-workstation {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+body.page-sd-ethereal-v2 #sidebar.sd-sidebar {
+  width: 320px;
+  flex: 0 0 320px;
+  padding: 18px 18px 24px;
+  background: rgba(255, 255, 255, 0.92);
+  border-right: 0.5px solid rgba(148, 163, 184, 0.42);
+  overflow-y: auto;
+}
+
+body.page-sd-ethereal-v2 .sd-sidebar-section {
+  padding: 0 0 18px;
+  margin-bottom: 18px;
+  border-bottom: 0.5px solid rgba(148, 163, 184, 0.24);
+}
+
+body.page-sd-ethereal-v2 .sd-sidebar-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+body.page-sd-ethereal-v2 .sd-section-title {
+  margin: 0 0 12px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+body.page-sd-ethereal-v2 .sd-input-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+body.page-sd-ethereal-v2 .sd-upload-grid {
+  display: grid;
+  gap: 12px;
+}
+
+body.page-sd-ethereal-v2 .sd-upload-block {
+  cursor: pointer;
+}
+
+body.page-sd-ethereal-v2 .sd-upload-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+body.page-sd-ethereal-v2 .sd-upload-label-row em {
+  font-style: normal;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+body.page-sd-ethereal-v2 .sd-upload-preview {
+  min-height: 140px;
+  border-radius: 18px;
+  border: 0.5px solid rgba(148, 163, 184, 0.3);
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  box-shadow: inset 0 3px 14px rgba(15, 23, 42, 0.07);
+}
+
+body.page-sd-ethereal-v2 select,
+body.page-sd-ethereal-v2 textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 0.5px solid rgba(148, 163, 184, 0.36);
+  background: rgba(255, 255, 255, 0.85);
+  color: #111827;
+  box-shadow: none;
+}
+
+body.page-sd-ethereal-v2 textarea {
+  min-height: 88px;
+  padding: 12px 14px;
+}
+
+body.page-sd-ethereal-v2 .sd-precision-group {
+  margin-bottom: 14px;
+}
+
+body.page-sd-ethereal-v2 .sd-precision-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+body.page-sd-ethereal-v2 .param-num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #2d5bff;
+}
+
+body.page-sd-ethereal-v2 input[type="range"] {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #e2e8f0;
+  height: 2px;
+  border-radius: 999px;
+}
+
+body.page-sd-ethereal-v2 input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 2px solid #2d5bff;
+  box-shadow: 0 2px 8px rgba(45, 91, 255, 0.16);
+}
+
+body.page-sd-ethereal-v2 .sd-inline-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.page-sd-ethereal-v2 .secondary-btn,
+body.page-sd-ethereal-v2 .secondary-btn.secondary-btn-primary {
+  min-height: 38px;
+  border-radius: 12px;
+  border: 0.5px solid rgba(148, 163, 184, 0.34);
+  background: rgba(255, 255, 255, 0.88);
+  color: #334155;
+  box-shadow: none;
+}
+
+body.page-sd-ethereal-v2 .sd-checkbox-row {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+body.page-sd-ethereal-v2 #canvas-area.sd-canvas-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background-color: #f7f7f9;
+  background-image: radial-gradient(rgba(226, 232, 240, 0.92) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+body.page-sd-ethereal-v2 .sd-canvas-stage {
+  width: min(100%, 1180px);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+}
+
+body.page-sd-ethereal-v2 .sd-canvas-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 22px;
+}
+
+body.page-sd-ethereal-v2 .status-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: #475569;
+}
+
+body.page-sd-ethereal-v2 .sd-canvas-frame.result-container {
+  min-height: 0;
+  height: 100%;
+  border-radius: 24px;
+  border: 0.5px solid rgba(148, 163, 184, 0.34);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+body.page-sd-ethereal-v2 #result-gallery {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+}
+
+body.page-sd-ethereal-v2 .sd-result-placeholder {
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+body.page-sd-ethereal-v2 #result-gallery img,
+body.page-sd-ethereal-v2 .result-container img {
+  max-height: min(72vh, 860px);
+  width: auto;
+  border-radius: 18px;
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.12);
+}
+
+body.page-sd-ethereal-v2 .processing-overlay {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+body.page-sd-ethereal-v2 .processing-overlay::after {
+  background: linear-gradient(
+    135deg,
+    transparent 0%,
+    rgba(45, 91, 255, 0.04) 30%,
+    rgba(45, 91, 255, 0.14) 50%,
+    transparent 100%
+  );
+}
+
+body.page-sd-ethereal-v2 .sd-canvas-toolbar {
+  display: grid;
+  grid-template-columns: 260px minmax(180px, 1fr) 320px;
+  gap: 18px;
+  align-items: center;
+}
+
+body.page-sd-ethereal-v2 .sd-run-btn {
+  min-height: 48px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+body.page-sd-ethereal-v2 .sd-progress-track {
+  align-self: center;
+}
+
+body.page-sd-ethereal-v2 .sd-canvas-helper {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 0.5px solid rgba(148, 163, 184, 0.34);
+  background: rgba(255, 255, 255, 0.8);
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 1180px) {
+  body.page-sd-ethereal-v2 .sd-topbar {
+    grid-template-columns: 1fr;
+    height: auto;
+    padding: 12px 16px;
+  }
+
+  body.page-sd-ethereal-v2 .sd-topbar-center {
+    text-align: left;
+  }
+
+  body.page-sd-ethereal-v2 .sd-workstation {
+    flex-direction: column;
+  }
+
+  body.page-sd-ethereal-v2 #sidebar.sd-sidebar {
+    width: 100%;
+    flex-basis: auto;
+    max-height: 48vh;
+  }
+
+  body.page-sd-ethereal-v2 .sd-canvas-toolbar {
+    grid-template-columns: 1fr;
+  }
+}

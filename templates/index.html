@@ -2,99 +2,476 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>风格迁移在线体验</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>风格迁移工作台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --font-sans: "Inter", system-ui, sans-serif;
+        --font-mono: "JetBrains Mono", monospace;
+        --accent-blue: #2d5bff;
+      }
+
+      body {
+        font-family: var(--font-sans);
+      }
+
+      .mono,
+      .param-num,
+      #status-text {
+        font-family: var(--font-mono);
+        letter-spacing: -0.02em;
+      }
+
+      #canvas-area {
+        position: relative;
+        padding: 80px !important;
+        background: radial-gradient(circle at center, #ffffff 0%, #f3f5f8 100%);
+      }
+
+      #canvas-area::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(rgba(45, 91, 255, 0.05) 1px, transparent 1px);
+        background-size: 32px 32px;
+        pointer-events: none;
+      }
+
+      .precision-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 2px;
+        border-radius: 999px;
+        background: #dbe3ee;
+      }
+
+      .precision-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: #fff;
+        border: 2px solid var(--accent-blue);
+        box-shadow: 0 2px 10px rgba(45, 91, 255, 0.16);
+      }
+
+      .precision-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: #fff;
+        border: 2px solid var(--accent-blue);
+        box-shadow: 0 2px 10px rgba(45, 91, 255, 0.16);
+      }
+
+      .processing-overlay {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.45s ease, visibility 0.45s ease;
+        z-index: 20;
+      }
+
+      .processing-overlay.active {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .processing-overlay.revealing {
+        opacity: 0;
+      }
+
+      .processing-shell {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 50% 50%, rgba(45, 91, 255, 0.18), transparent 20%),
+          radial-gradient(circle at 50% 50%, rgba(120, 90, 255, 0.1), transparent 38%),
+          linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(0, 0, 0, 0.995));
+        box-shadow: inset 0 0 0 1px rgba(45, 91, 255, 0.08);
+      }
+
+      .processing-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.45s ease, visibility 0.45s ease;
+        z-index: 19;
+      }
+
+      .processing-canvas.active {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .processing-copy {
+        position: absolute;
+        left: 24px;
+        right: 24px;
+        bottom: 20px;
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 20px;
+        z-index: 2;
+      }
+
+      .processing-hud {
+        position: absolute;
+        top: 22px;
+        right: 28px;
+        z-index: 2;
+        text-align: right;
+      }
+
+      .processing-label {
+        max-width: 52%;
+      }
+
+      .processing-title {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.36em;
+        text-transform: uppercase;
+        color: rgba(173, 198, 255, 0.72);
+      }
+
+      .processing-detail {
+        margin-top: 10px;
+        font-size: 12px;
+        line-height: 1.7;
+        color: rgba(196, 209, 255, 0.58);
+      }
+
+      .processing-meta {
+        display: flex;
+        flex-direction: column;
+        align-items: end;
+        gap: 8px;
+        text-align: right;
+        color: rgba(173, 198, 255, 0.62);
+      }
+
+      .processing-steps {
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+      }
+
+      .processing-model {
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(118, 147, 255, 0.48);
+      }
+
+      .processing-percent {
+        font-size: 30px;
+        color: rgba(219, 230, 255, 0.96);
+        text-shadow: 0 0 24px rgba(45, 91, 255, 0.42);
+      }
+
+      .processing-caption {
+        margin-top: 2px;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(115, 152, 255, 0.72);
+      }
+
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(16px) scale(0.985); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+
+      @keyframes resultPulse {
+        0% { box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.1); }
+        50% { box-shadow: 0 46px 110px -20px rgba(45, 91, 255, 0.14), 0 0 1px rgba(45, 91, 255, 0.18); }
+        100% { box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.1); }
+      }
+
+      #result-image.fade-in,
+      #result-gallery img.fade-in {
+        animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      #result-image {
+        opacity: 1;
+        transition: opacity 0.8s ease, filter 0.8s ease, transform 0.8s ease;
+      }
+
+      #result-image.is-generating {
+        opacity: 0;
+        filter: blur(22px) saturate(0.6);
+        transform: scale(1.015);
+      }
+
+      .celebrate-result {
+        animation: resultPulse 1.3s ease;
+      }
+
+      aside#sidebar {
+        scrollbar-width: thin;
+        scrollbar-color: #e2e8f0 transparent;
+      }
+
+      aside#sidebar::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      aside#sidebar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      aside#sidebar::-webkit-scrollbar-thumb {
+        background: #e2e8f0;
+        border-radius: 999px;
+      }
+
+      .sidebar-section {
+        border-top: 1px solid rgba(0, 0, 0, 0.04);
+        padding-top: 1.5rem;
+      }
+
+      .section-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: #94a3b8;
+      }
+
+      .tool-btn {
+        min-height: 38px;
+        border-radius: 12px;
+        border: none;
+        background: #f8fafc;
+        color: #334155;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 0 12px;
+        transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+      }
+
+      .tool-btn:hover {
+        background: #eef4ff;
+        color: #1d4ed8;
+      }
+
+      .tool-btn-primary {
+        background: #eef4ff;
+        color: #1d4ed8;
+      }
+
+      .upload-surface {
+        border-radius: 18px;
+        border: 0.5px solid rgba(148, 163, 184, 0.28);
+        background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(241, 245, 249, 0.9));
+        box-shadow: inset 0 1px 8px rgba(15, 23, 42, 0.05);
+      }
+
+      .upload-surface:hover {
+        border-color: rgba(45, 91, 255, 0.32);
+        background: linear-gradient(180deg, rgba(248, 250, 255, 1), rgba(239, 246, 255, 0.98));
+      }
+
+      .preview img,
+      #result-gallery img,
+      #result-image {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+      }
+
+      .style-card.active {
+        border-color: rgba(45, 91, 255, 0.34);
+        background: rgba(239, 246, 255, 0.95);
+        color: #1d4ed8;
+      }
+
+      #run-btn:disabled,
+      #cancel-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+        transform: none;
+        box-shadow: none;
+      }
+    </style>
   </head>
-  <body class="page-index">
-    <div class="app">
-      <header class="app-header">
-        <a href="/local-history" class="header-history-float" title="本地记录（完整列表）">📜</a>
-        <h1>🎨 风格迁移在线系统</h1>
-        <p>选择模型、上传图片，在 GPU 上实时查看风格迁移进度</p>
-        <p style="margin-top: 12px;">
-          <a href="/sd">✨ 切换到 SD 动漫风格转换</a>
-        </p>
+  <body class="h-screen overflow-hidden bg-[#f9fafb] text-slate-900 antialiased">
+    <div class="flex h-screen flex-col">
+      <header class="flex h-14 items-center justify-between border-b border-slate-200/50 bg-white/80 px-6 backdrop-blur-md">
+        <div class="flex items-center gap-3">
+          <div class="h-6 w-6 rotate-45 rounded-sm bg-blue-600 shadow-lg shadow-blue-500/20"></div>
+          <div>
+            <div class="text-[11px] font-bold uppercase tracking-tight text-slate-900">风格迁移工作台</div>
+            <div class="text-[10px] tracking-[0.22em] text-slate-400">经典模型路线</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] text-slate-500">
+          <span class="mono hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 md:inline-flex">模型：经典风格迁移</span>
+          <a href="/sd" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">SD 动漫页</a>
+          <a href="/gallery" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">画廊</a>
+        </div>
       </header>
 
-      <main class="app-main">
-        <section class="card card-model">
-          <h2><span class="badge">SCI-FI</span> 1. 选择模型</h2>
-          <select id="model-select">
-            {% for key, name in models.items() %}
-            <option value="{{ key }}">{{ name }}</option>
-            {% endfor %}
-          </select>
-          <p class="help-text" style="margin-top:10px;">💡 VGG19 需要额外上传风格图，其它模型只需内容图。</p>
-        </section>
+      <main class="flex flex-1 flex-row overflow-hidden">
+        <aside id="sidebar" class="flex w-80 flex-col overflow-y-auto border-r border-[rgba(0,0,0,0.04)] bg-white px-6 py-6">
+          <section class="space-y-3">
+            <div class="section-label">模型</div>
+            <div id="model-picker" class="grid grid-cols-2 gap-2">
+              {% for key, name in models.items() %}
+              <button type="button" class="style-card rounded-2xl border border-slate-200/80 px-3 py-3 text-left text-xs font-medium text-slate-700 transition" data-value="{{ key }}">
+                <span class="block leading-5">{{ name }}</span>
+                <span class="mono mt-2 block text-[10px] text-slate-400">{{ key }}</span>
+              </button>
+              {% endfor %}
+            </div>
+            <select id="model-select" class="w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400">
+              {% for key, name in models.items() %}
+              <option value="{{ key }}">{{ name }}</option>
+              {% endfor %}
+            </select>
+            <p class="text-xs leading-5 text-slate-500">VGG19 需要额外上传风格图，其它模型只需要内容图。</p>
+          </section>
 
-        <section class="card card-upload">
-          <h2><span class="badge">NAV</span> 2. 上传图片</h2>
-          <div class="grid-2">
-            <div class="field">
-              <label>📸 内容图（必选）</label>
-              <input id="content-input" type="file" accept="image/*" />
-              <div class="preview" id="content-preview">点击上传内容图片</div>
+          <section class="sidebar-section space-y-3">
+            <div class="section-label">输入素材</div>
+            <div class="grid grid-cols-2 gap-3">
+              <div onclick="document.getElementById('content-input').click()" class="upload-surface cursor-pointer overflow-hidden transition">
+                <div class="flex items-center justify-between px-3 pt-3 text-[11px] font-medium text-slate-500">
+                  <span>内容图</span>
+                  <span>必选</span>
+                </div>
+                <input id="content-input" type="file" accept="image/*" class="hidden" />
+                <div id="content-preview" class="preview flex aspect-[3/4] items-center justify-center p-3 text-sm text-slate-400">上传内容图</div>
+              </div>
+              <div onclick="document.getElementById('style-input').click()" class="upload-surface cursor-pointer overflow-hidden transition">
+                <div class="flex items-center justify-between px-3 pt-3 text-[11px] font-medium text-slate-500">
+                  <span>风格图</span>
+                  <span>可选</span>
+                </div>
+                <input id="style-input" type="file" accept="image/*" class="hidden" />
+                <div id="style-preview" class="preview flex aspect-[3/4] items-center justify-center p-3 text-sm text-slate-400">上传风格图</div>
+              </div>
             </div>
-            <div class="field">
-              <label>🎭 风格图（VGG19 必选，其它可选）</label>
-              <input id="style-input" type="file" accept="image/*" />
-              <div class="preview" id="style-preview">点击上传风格图片</div>
-              <p class="help-text">💡 上传风格图可获得更明显的迁移效果。</p>
-            </div>
-          </div>
-          <div class="field" style="margin-top: 12px;">
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" id="upload-downscale-checkbox" />
-              上传前缩小大图（最长边 2048，减轻带宽与显存；PNG 仍为 PNG）
+            <label class="flex items-start gap-2 text-xs leading-5 text-slate-500">
+              <input type="checkbox" id="upload-downscale-checkbox" class="mt-0.5 accent-blue-600" />
+              上传前自动缩小大图，最长边限制为 2048。
             </label>
-          </div>
-        </section>
+          </section>
 
-        <section class="card card-run">
-          <h2><span class="badge">ENGINE</span> 3. 执行风格迁移</h2>
-          <div class="field">
-            <label for="strength-input">⚡ 风格强度（越大越明显）</label>
-            <input id="strength-input" type="range" min="0" max="3" step="0.05" value="1.5" />
-            <div class="strength-value" id="strength-value">1.50</div>
-            <div class="strength-quick-row" role="group" aria-label="强度快捷">
-              <span class="strength-quick-label">快捷</span>
-              <button type="button" class="secondary-btn strength-quick-btn" data-strength="0.85">偏轻</button>
-              <button type="button" class="secondary-btn strength-quick-btn" data-strength="1.50">中等</button>
-              <button type="button" class="secondary-btn strength-quick-btn" data-strength="2.35">偏重</button>
+          <section class="sidebar-section space-y-4">
+            <div class="section-label">参数</div>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <label for="strength-input" class="text-xs font-medium text-slate-700">风格强度</label>
+                <span id="strength-value" class="param-num min-w-[3rem] text-right text-[11px] text-blue-600">1.50</span>
+              </div>
+              <input id="strength-input" type="range" min="0" max="3" step="0.05" value="1.5" class="precision-slider" />
             </div>
-          </div>
-          <div class="fun-actions" role="group" aria-label="趣味快捷">
-            <button type="button" id="random-params-btn" class="secondary-btn">🎲 随机参数</button>
-            <button type="button" id="copy-recipe-btn" class="secondary-btn">📋 复制配方</button>
-            <button type="button" id="paste-recipe-btn" class="secondary-btn">📥 粘贴配方</button>
-          </div>
-        </section>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" class="tool-btn strength-quick-btn" data-strength="0.85">轻量</button>
+              <button type="button" class="tool-btn strength-quick-btn" data-strength="1.50">平衡</button>
+              <button type="button" class="tool-btn strength-quick-btn" data-strength="2.35">强化</button>
+            </div>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" id="random-params-btn" class="tool-btn">随机参数</button>
+              <button type="button" id="copy-recipe-btn" class="tool-btn">复制配方</button>
+              <button type="button" id="paste-recipe-btn" class="tool-btn tool-btn-primary">粘贴配方</button>
+            </div>
+          </section>
 
-        <section class="card card-output">
-          <h2><span class="badge">OUTPUT</span> 4. 结果预览</h2>
-          <div class="result-container">
-            <div id="result-gallery"></div>
-            <div id="result-placeholder">✨ 处理完成后，结果将在这里显示</div>
-          </div>
-          <div class="output-actions">
-            <button id="run-btn" class="primary output-run-btn">🚀 开始迁移</button>
-            <div id="status-text" class="status-text"></div>
-            <div class="progress-container">
-              <div id="progress-bar" class="progress-bar"></div>
+          <div class="sidebar-section mt-auto space-y-3">
+            <div class="grid grid-cols-2 gap-2">
+              <button id="run-btn" class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(45,91,255,0.24)] transition duration-200 hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-[0_16px_38px_rgba(45,91,255,0.28)] active:scale-[0.96]">
+                开始生成
+              </button>
+              <button id="cancel-btn" class="tool-btn">取消任务</button>
             </div>
-            <div id="queue-banner" class="queue-banner" hidden></div>
-            <p class="help-text shortcut-hint">快捷键：<kbd>Ctrl</kbd>+<kbd>Enter</kbd> 开始迁移</p>
+            <p class="text-xs leading-5 text-slate-500">保留原有接口与轮询逻辑，只更新视觉层和交互反馈。</p>
+          </div>
+        </aside>
+
+        <section id="canvas-area" class="relative flex flex-1 items-center justify-center overflow-hidden">
+          <div class="relative z-10 flex h-full w-full flex-col gap-4">
+            <div class="flex min-h-6 items-center justify-between gap-4">
+              <div id="status-text" class="sr-only"></div>
+              <div class="ml-auto flex items-center gap-3">
+                <div id="queue-banner" hidden class="rounded-full border border-slate-200 bg-white/85 px-3 py-1 text-[11px] text-slate-500"></div>
+              </div>
+            </div>
+
+            <div id="result-container" class="result-container relative mx-auto flex max-h-[80vh] min-h-0 w-full max-w-[min(1100px,100%)] flex-1 items-center justify-center overflow-hidden rounded-[10px] border border-white/80 bg-white p-3 shadow-[0_40px_100px_-20px_rgba(0,0,0,0.1),0_0_1px_rgba(0,0,0,0.1)] backdrop-blur-xl">
+              <canvas id="triger-warp-canvas" class="processing-canvas"></canvas>
+              <div id="loading-overlay" class="processing-overlay" aria-hidden="true">
+                <div class="processing-shell"></div>
+                <div class="processing-hud mono">
+                  <div id="processing-percent" class="processing-percent">00%</div>
+                  <div class="processing-caption">generation progress</div>
+                </div>
+                <div class="processing-copy mono">
+                  <div class="processing-label">
+                    <div class="processing-title">Generating</div>
+                    <div id="processing-detail" class="processing-detail">奇点已点亮，正在重组图像场。</div>
+                  </div>
+                  <div class="processing-meta">
+                    <div id="processing-steps" class="processing-steps">Steps 00 / 30</div>
+                    <div id="processing-model" class="processing-model">Sampler · DPM++ 2M Karras</div>
+                  </div>
+                </div>
+              </div>
+              <div class="hidden" aria-hidden="true">
+                <div class="processing-shell"></div>
+                <canvas class="processing-canvas"></canvas>
+                <div class="processing-copy mono">
+                  <div class="processing-label">
+                    <div class="processing-title">Generating</div>
+                    <div class="processing-detail">奇点已点亮，正在重组图像场。</div>
+                  </div>
+                  <div class="processing-meta">
+                    <div class="processing-steps">Steps 00 / 30</div>
+                    <div class="processing-model">Sampler · DPM++ 2M Karras</div>
+                  </div>
+                </div>
+              </div>
+              <img id="result-image" src="" class="hidden max-h-[calc(80vh-24px)] w-auto rounded-sm" alt="" />
+              <div id="result-gallery" class="flex h-full w-full items-center justify-center gap-6 overflow-auto p-6"></div>
+              <div id="result-placeholder" class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm leading-6 text-slate-400">
+                上传内容图与风格图后，生成结果会在这里显示。
+              </div>
+            </div>
+
+            <div class="grid grid-cols-[minmax(160px,1fr)_320px] items-center gap-5">
+              <div class="h-[2px] rounded-full bg-slate-200">
+                <div id="progress-bar" class="h-[2px] rounded-full bg-gradient-to-r from-blue-600 to-cyan-400" style="width: 0%"></div>
+              </div>
+              <div class="flex h-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/78 px-5 text-center text-xs text-slate-500 backdrop-blur-sm">
+                左侧调整模型与强度，右侧查看结果与下载入口。
+              </div>
+            </div>
           </div>
         </section>
       </main>
-
-      <footer class="app-footer">
-        <span>⚙️ GPU 自动检测使用（CUDA 优先，其次 CPU）</span>
-      </footer>
     </div>
 
     <script src="/static/history_local.js"></script>

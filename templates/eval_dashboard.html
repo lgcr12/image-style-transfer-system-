@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>自动化评测看板</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="page-history">
+    <div class="app">
+      <header class="app-header">
+        <h1>📈 自动化评测看板</h1>
+        <p>基于历史任务自动聚合风格得分表现</p>
+      </header>
+      <main class="app-main app-main--single">
+        <section class="card">
+          <div id="eval-summary" class="help-text">加载中…</div>
+          <table id="eval-table" style="width:100%;margin-top:12px;">
+            <thead>
+              <tr>
+                <th style="text-align:left;">风格</th>
+                <th>样本数</th>
+                <th>平均分</th>
+                <th>最高</th>
+                <th>最低</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+    <script src="/static/eval_dashboard.js"></script>
+  </body>
+  </html>

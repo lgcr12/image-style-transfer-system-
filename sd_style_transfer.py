@@ -6,6 +6,7 @@ import contextlib
 import threading
 import io
 import time
+import json
 from pathlib import Path
 from typing import Callable, Dict, Optional, Any
 
@@ -18,19 +19,44 @@ from diffusers import (
 )
 
 
+STYLE_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sd_styles.json"
+
+
+def _load_style_config() -> dict[str, Any]:
+    default = {
+        "styles": {
+            "default": {"label": "两个 LoRA 都用（0.8 / 0.7）", "adapters": ["lora1", "lora2"], "weights": [0.8, 0.7]},
+            "lora1": {"label": "水彩泼墨画", "adapters": ["lora1"], "weights": [1.0]},
+            "lora2": {"label": "百花缭乱 Midjourney", "adapters": ["lora2"], "weights": [1.0]},
+            "kyoto": {"label": "京阿尼Kyoto Anime", "adapters": ["kyoto"], "weights": [1.0]},
+            "shinkai_char": {"label": "新海诚Character（0.8）", "adapters": ["shinkai_char"], "weights": [0.8]},
+            "shinkai_view": {"label": "新海诚 View（0.7）", "adapters": ["shinkai_view"], "weights": [0.7]},
+            "ukiyo": {"label": "浮世绘（0.8）", "adapters": ["ukiyo"], "weights": [0.8]},
+            "shinkai_mix": {
+                "label": "Shinkai View + Character + Ukiyo",
+                "adapters": ["shinkai_view", "shinkai_char", "ukiyo"],
+                "weights": [0.7, 0.8, 0.8],
+            },
+            "jojo": {"label": "JoJo（推荐 0.6~0.8）", "adapters": ["jojo"], "weights": [0.7]},
+        },
+        "adapters": {},
+    }
+    try:
+        if STYLE_CONFIG_PATH.is_file():
+            return json.loads(STYLE_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return default
+
+
+SD_STYLE_CONFIG = _load_style_config()
 AVAILABLE_SD_STYLES: Dict[str, str] = {
-    # 你可以在环境变量里把 LoRA 路径指向不同文件，实现不同风格。
-    # 这里的“风格名”用来选择启用哪些 LoRA 以及它们的权重。
-    "default": "两个 LoRA 都用（0.8 / 0.7）",
-    "lora1": "水彩泼墨画）",
-    "lora2": "百花缭乱 Midjourney",
-    "kyoto": "京阿尼Kyoto Anime",
-    "shinkai_char": "新海诚Character（0.8）",
-    "shinkai_view": "新海诚 View（0.6~0.8，默认 0.7）",
-    "ukiyo": "浮世绘（0.8）",
-    "shinkai_mix": "Shinkai View + Character + Ukiyo（0.7 / 0.8 / 0.8）",
-    "jojo": "JoJo（推荐 0.6~0.8）",
+    k: str(v.get("label") or k) for k, v in (SD_STYLE_CONFIG.get("styles") or {}).items()
 }
+
+
+def get_sd_style_config() -> dict[str, Any]:
+    return SD_STYLE_CONFIG
 
 
 _PIPELINE_LOCK = threading.Lock()
@@ -455,43 +481,14 @@ def run_sd_style_transfer(
     pipe = _load_pipeline_if_needed(phase_callback=_ph)
     _ph("running", "LoRA 与 img2img 采样中（步进进度见下方）…")
 
-    # 优先用环境变量；如果没有设置，就用你当前已放在 E:\\models 下的两个 LoRA 作为默认。
-    lora1_path = os.environ.get(
-        "SD_LORA_1_PATH",
-        r"E:\models\水彩泼墨画风-lora_v2.safetensors",
-    ).strip()
-    lora2_path = os.environ.get(
-        "SD_LORA_2_PATH",
-        r"E:\models\百花缭乱_midjourney 二次元 Lora_v1.0.safetensors",
-    ).strip()
-    lora3_path = os.environ.get(
-        "SD_LORA_3_PATH",
-        r"E:\models\kyoto_anime.safetensors",
-    ).strip()
-    lora4_path = os.environ.get(
-        "SD_LORA_4_PATH",
-        r"E:\models\shinkai__Character_v1.0.safetensors",
-    ).strip()
-    lora5_path = os.environ.get(
-        "SD_LORA_5_PATH",
-        r"E:\models\jojo.safetensors",
-    ).strip()
-    lora6_path = os.environ.get(
-        "SD_LORA_6_PATH",
-        r"E:\models\shinkai_view_V1.0.safetensors",
-    ).strip()
-    lora7_path = os.environ.get(
-        "SD_LORA_7_PATH",
-        r"E:\models\ukiyo.safetensors",
-    ).strip()
-
-    lora1_file = Path(lora1_path)
-    lora2_file = Path(lora2_path)
-    lora3_file = Path(lora3_path)
-    lora4_file = Path(lora4_path)
-    lora5_file = Path(lora5_path)
-    lora6_file = Path(lora6_path)
-    lora7_file = Path(lora7_path)
+    adapter_cfg = SD_STYLE_CONFIG.get("adapters") or {}
+    adapter_to_file: dict[str, Path] = {}
+    for adapter_name, cfg in adapter_cfg.items():
+        env_key = str(cfg.get("env") or "").strip()
+        default_path = str(cfg.get("default_path") or "").strip()
+        resolved = (os.environ.get(env_key, default_path) if env_key else default_path).strip()
+        if resolved:
+            adapter_to_file[adapter_name] = Path(resolved)
 
     # 只加载一次 LoRA（每次 set_adapters 只切换权重）
     # diffusers 的 LoRA 在内部是以 adapter_name 注册的，我们固定命名。
@@ -499,20 +496,9 @@ def run_sd_style_transfer(
         # 避免重复 load：通过在模型上挂一个标记判断
         if not getattr(pipe, "_lora_loaded", False):
             # 仅加载存在的 LoRA，避免本地文件不全时阻塞所有风格。
-            if lora1_file.exists():
-                _safe_load_lora_weights(pipe, lora1_file, adapter_name="lora1")
-            if lora2_file.exists():
-                _safe_load_lora_weights(pipe, lora2_file, adapter_name="lora2")
-            if lora3_file.exists():
-                _safe_load_lora_weights(pipe, lora3_file, adapter_name="kyoto")
-            if lora4_file.exists():
-                _safe_load_lora_weights(pipe, lora4_file, adapter_name="shinkai_char")
-            if lora5_file.exists():
-                _safe_load_lora_weights(pipe, lora5_file, adapter_name="jojo")
-            if lora6_file.exists():
-                _safe_load_lora_weights(pipe, lora6_file, adapter_name="shinkai_view")
-            if lora7_file.exists():
-                _safe_load_lora_weights(pipe, lora7_file, adapter_name="ukiyo")
+            for aname, apath in adapter_to_file.items():
+                if apath.exists():
+                    _safe_load_lora_weights(pipe, apath, adapter_name=aname)
             setattr(pipe, "_lora_loaded", True)
 
     from PIL import Image
@@ -552,28 +538,12 @@ def run_sd_style_transfer(
     # 根据选择启用不同 LoRA 组合：
     # - 新版 diffusers: 使用 set_adapters 做多 LoRA 混合
     # - 旧版 diffusers: 回退到单 LoRA / 双次生成后融合，避免版本不兼容直接失败
-    adapter_config: Dict[str, tuple[list[str], list[float]]] = {
-        "default": (["lora1", "lora2"], [0.8, 0.7]),
-        "lora1": (["lora1"], [1.0]),
-        "lora2": (["lora2"], [1.0]),
-        "kyoto": (["kyoto"], [1.0]),
-        "shinkai_char": (["shinkai_char"], [0.8]),
-        "shinkai_view": (["shinkai_view"], [0.7]),
-        "ukiyo": (["ukiyo"], [0.8]),
-        "shinkai_mix": (["shinkai_view", "shinkai_char", "ukiyo"], [0.7, 0.8, 0.8]),
-        "jojo": (["jojo"], [0.7]),
-    }
-    adapters, adapter_weights = adapter_config[sd_style_name]
-    adapter_to_file = {
-        "lora1": lora1_file,
-        "lora2": lora2_file,
-        "kyoto": lora3_file,
-        "shinkai_char": lora4_file,
-        "jojo": lora5_file,
-        "shinkai_view": lora6_file,
-        "ukiyo": lora7_file,
-    }
-    missing_files = [a for a in adapters if not adapter_to_file[a].exists()]
+    style_def = (SD_STYLE_CONFIG.get("styles") or {}).get(sd_style_name) or {}
+    adapters = list(style_def.get("adapters") or [])
+    adapter_weights = [float(x) for x in (style_def.get("weights") or [])]
+    if not adapters or len(adapters) != len(adapter_weights):
+        raise RuntimeError(f"风格配置无效：{sd_style_name}")
+    missing_files = [a for a in adapters if a not in adapter_to_file or not adapter_to_file[a].exists()]
     if missing_files:
         missing_info = ", ".join(f"{a} -> {adapter_to_file[a]}" for a in missing_files)
         raise FileNotFoundError(f"所选风格缺少 LoRA 文件：{missing_info}")
@@ -613,20 +583,7 @@ def run_sd_style_transfer(
             "shinkai_view",
             "ukiyo",
         }:
-            if sd_style_name == "lora1":
-                target_path = lora1_file
-            elif sd_style_name == "lora2":
-                target_path = lora2_file
-            elif sd_style_name == "shinkai_char":
-                target_path = lora4_file
-            elif sd_style_name == "jojo":
-                target_path = lora5_file
-            elif sd_style_name == "shinkai_view":
-                target_path = lora6_file
-            elif sd_style_name == "ukiyo":
-                target_path = lora7_file
-            else:
-                target_path = lora3_file
+            target_path = adapter_to_file[adapters[0]]
             if not target_path.exists():
                 raise FileNotFoundError(f"找不到 LoRA：{target_path}")
             with _PIPELINE_LOCK:
@@ -643,15 +600,7 @@ def run_sd_style_transfer(
         else:
             # 2) 旧版 diffusers 不支持 set_adapters 时，回退为“逐 LoRA 生成再加权融合”。
             #    目前覆盖 default 与 shinkai_mix 两种多 LoRA 组合。
-            if sd_style_name == "default":
-                blend_targets = [(lora1_file, 0.8), (lora2_file, 0.7)]
-            elif sd_style_name == "shinkai_mix":
-                blend_targets = [(lora6_file, 0.7), (lora4_file, 0.8), (lora7_file, 0.8)]
-            else:
-                raise RuntimeError(
-                    "当前 diffusers 版本不支持多 LoRA set_adapters，"
-                    f"且未定义该风格的兼容融合回退：{sd_style_name}"
-                )
+            blend_targets = [(adapter_to_file[a], w) for a, w in zip(adapters, adapter_weights)]
 
             blend_images = []
             total = max(1, len(blend_targets))

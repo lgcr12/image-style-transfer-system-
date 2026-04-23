@@ -156,6 +156,52 @@
       if (!side) sync();
     });
     modeRow.appendChild(modeBtn);
+
+    const lens = document.createElement("div");
+    lens.className = "compare-lens";
+    lens.style.display = "none";
+    lens.style.position = "absolute";
+    lens.style.width = "140px";
+    lens.style.height = "140px";
+    lens.style.borderRadius = "50%";
+    lens.style.border = "2px solid rgba(99,102,241,0.8)";
+    lens.style.boxShadow = "0 6px 18px rgba(0,0,0,0.25)";
+    lens.style.pointerEvents = "none";
+    lens.style.backgroundImage = `url(${resultSrc})`;
+    lens.style.backgroundRepeat = "no-repeat";
+    lens.style.backgroundSize = "250% 250%";
+    lens.style.zIndex = "6";
+    inner.style.position = "relative";
+    inner.appendChild(lens);
+
+    let lensEnabled = false;
+    const lensBtn = document.createElement("button");
+    lensBtn.type = "button";
+    lensBtn.className = "secondary-btn";
+    lensBtn.textContent = "放大镜(结果)";
+    lensBtn.addEventListener("click", () => {
+      lensEnabled = !lensEnabled;
+      lens.style.display = lensEnabled ? "block" : "none";
+      lensBtn.textContent = lensEnabled ? "关闭放大镜" : "放大镜(结果)";
+    });
+    modeRow.appendChild(lensBtn);
+    inner.addEventListener("pointermove", (e) => {
+      if (!lensEnabled) return;
+      const rect = inner.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      lens.style.left = `${x - 70}px`;
+      lens.style.top = `${y - 70}px`;
+      const bx = (x / Math.max(1, rect.width)) * 100;
+      const by = (y / Math.max(1, rect.height)) * 100;
+      lens.style.backgroundPosition = `${bx}% ${by}%`;
+    });
+    inner.addEventListener("pointerleave", () => {
+      if (lensEnabled) lens.style.display = "none";
+    });
+    inner.addEventListener("pointerenter", () => {
+      if (lensEnabled) lens.style.display = "block";
+    });
     wrap.appendChild(modeRow);
 
     sync();

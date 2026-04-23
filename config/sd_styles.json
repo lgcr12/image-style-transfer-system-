@@ -1,0 +1,79 @@
+{
+  "styles": {
+    "default": {
+      "label": "两个 LoRA 都用（0.8 / 0.7）",
+      "adapters": ["lora1", "lora2"],
+      "weights": [0.8, 0.7]
+    },
+    "lora1": {
+      "label": "水彩泼墨画",
+      "adapters": ["lora1"],
+      "weights": [1.0]
+    },
+    "lora2": {
+      "label": "百花缭乱 Midjourney",
+      "adapters": ["lora2"],
+      "weights": [1.0]
+    },
+    "kyoto": {
+      "label": "京阿尼Kyoto Anime",
+      "adapters": ["kyoto"],
+      "weights": [1.0]
+    },
+    "shinkai_char": {
+      "label": "新海诚Character（0.8）",
+      "adapters": ["shinkai_char"],
+      "weights": [0.8]
+    },
+    "shinkai_view": {
+      "label": "新海诚 View（0.7）",
+      "adapters": ["shinkai_view"],
+      "weights": [0.7]
+    },
+    "ukiyo": {
+      "label": "浮世绘（0.8）",
+      "adapters": ["ukiyo"],
+      "weights": [0.8]
+    },
+    "shinkai_mix": {
+      "label": "Shinkai View + Character + Ukiyo",
+      "adapters": ["shinkai_view", "shinkai_char", "ukiyo"],
+      "weights": [0.7, 0.8, 0.8]
+    },
+    "jojo": {
+      "label": "JoJo（推荐 0.6~0.8）",
+      "adapters": ["jojo"],
+      "weights": [0.7]
+    }
+  },
+  "adapters": {
+    "lora1": {
+      "env": "SD_LORA_1_PATH",
+      "default_path": "E:/models/水彩泼墨画风-lora_v2.safetensors"
+    },
+    "lora2": {
+      "env": "SD_LORA_2_PATH",
+      "default_path": "E:/models/百花缭乱_midjourney 二次元 Lora_v1.0.safetensors"
+    },
+    "kyoto": {
+      "env": "SD_LORA_3_PATH",
+      "default_path": "E:/models/kyoto_anime.safetensors"
+    },
+    "shinkai_char": {
+      "env": "SD_LORA_4_PATH",
+      "default_path": "E:/models/shinkai__Character_v1.0.safetensors"
+    },
+    "jojo": {
+      "env": "SD_LORA_5_PATH",
+      "default_path": "E:/models/jojo.safetensors"
+    },
+    "shinkai_view": {
+      "env": "SD_LORA_6_PATH",
+      "default_path": "E:/models/shinkai_view_V1.0.safetensors"
+    },
+    "ukiyo": {
+      "env": "SD_LORA_7_PATH",
+      "default_path": "E:/models/ukiyo.safetensors"
+    }
+  }
+}

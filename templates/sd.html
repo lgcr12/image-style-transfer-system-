@@ -2,246 +2,442 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>SD 动漫风格转换</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SD 风格迁移工作台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+      :root {
+        --font-sans: "Inter", system-ui, sans-serif;
+        --font-mono: "JetBrains Mono", monospace;
+        --accent-blue: #2d5bff;
+      }
+
+      body {
+        font-family: var(--font-sans);
+      }
+
+      .mono,
+      .param-num,
+      #status-text,
+      #resource-monitor-text {
+        font-family: var(--font-mono);
+        letter-spacing: -0.02em;
+      }
+
+      #main-content {
+        position: relative;
+        padding: 80px !important;
+        background: radial-gradient(circle at center, #ffffff 0%, #f3f5f8 100%);
+      }
+
+      #main-content::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(rgba(45, 91, 255, 0.05) 1px, transparent 1px);
+        background-size: 32px 32px;
+        pointer-events: none;
+      }
+
+      #canvas-wrapper {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+        z-index: 5;
+      }
+
+      #warp-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        transition: opacity 0.35s ease;
+      }
+
+      #warp-canvas.active {
+        opacity: 1;
+      }
+
+      .precision-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 2px;
+        border-radius: 999px;
+        background: #dbe3ee;
+      }
+
+      .precision-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: #fff;
+        border: 2px solid var(--accent-blue);
+        box-shadow: 0 2px 10px rgba(45, 91, 255, 0.16);
+      }
+
+      .precision-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: #fff;
+        border: 2px solid var(--accent-blue);
+        box-shadow: 0 2px 10px rgba(45, 91, 255, 0.16);
+      }
+
+      .sidebar-section {
+        border-top: 1px solid rgba(0, 0, 0, 0.04);
+        padding-top: 1.5rem;
+      }
+
+      .section-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: #94a3b8;
+      }
+
+      .tool-btn {
+        min-height: 38px;
+        border-radius: 12px;
+        border: none;
+        background: #f8fafc;
+        color: #334155;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 0 12px;
+        transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+      }
+
+      .tool-btn:hover {
+        background: #eef4ff;
+        color: #1d4ed8;
+      }
+
+      .tool-btn-primary {
+        background: #eef4ff;
+        color: #1d4ed8;
+      }
+
+      .upload-surface {
+        border-radius: 18px;
+        border: 0.5px solid rgba(148, 163, 184, 0.28);
+        background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(241, 245, 249, 0.9));
+        box-shadow: inset 0 1px 8px rgba(15, 23, 42, 0.05);
+      }
+
+      .upload-surface:hover {
+        border-color: rgba(45, 91, 255, 0.32);
+        background: linear-gradient(180deg, rgba(248, 250, 255, 1), rgba(239, 246, 255, 0.98));
+      }
+
+      .preview img,
+      #result-gallery img,
+      #result-image {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+      }
+
+      .processing-overlay {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        background: rgba(3, 7, 18, 0.18);
+        pointer-events: none;
+      }
+
+      .result-stage {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        z-index: 6;
+        min-width: 280px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+        backdrop-filter: blur(24px);
+      }
+
+      #generating-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 7;
+        display: none;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #020409;
+      }
+
+      #generating-overlay.active {
+        display: flex;
+      }
+
+      #gen-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .gen-copy {
+        position: relative;
+        z-index: 2;
+        pointer-events: none;
+      }
+
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(16px) scale(0.985); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+
+      #result-image.fade-in,
+      #result-gallery img.fade-in {
+        animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      #run-btn:disabled,
+      #cancel-btn:disabled,
+      #pause-job-btn:disabled,
+      #resume-job-btn:disabled,
+      #cancel-job-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+        transform: none;
+        box-shadow: none;
+      }
+    </style>
   </head>
-  <body class="page-sd">
-    <div class="app">
-      <header class="app-header">
-        <a href="/local-history" class="header-history-float" title="本地记录（完整列表）">📜</a>
-        <h1 class="sd-page-title">SD 动漫风格转换</h1>
-        <p class="sd-lead">img2img · 多 LoRA 组合 · 智能分析建议 · 队列与批量导出（可选提示词微调）</p>
-        <p class="sd-back-row">
-          <a href="/" class="sd-back-link">返回风格迁移页</a>
-        </p>
+  <body class="h-screen overflow-hidden bg-[#f9fafb] text-slate-900 antialiased">
+    <div class="flex h-screen flex-col">
+      <header class="flex h-14 items-center justify-between border-b border-slate-200/50 bg-white/80 px-6 backdrop-blur-md">
+        <div class="flex items-center gap-3">
+          <div class="h-6 w-6 rotate-45 rounded-sm bg-blue-600 shadow-lg shadow-blue-500/20"></div>
+          <div>
+            <div class="text-[11px] font-bold uppercase tracking-tight text-slate-900">SD 风格迁移工作台</div>
+            <div class="text-[10px] tracking-[0.22em] text-slate-400">Stable Diffusion</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] text-slate-500">
+          <span class="mono hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 md:inline-flex">模式：SD 重绘</span>
+          <a href="/" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">风格迁移</a>
+          <a href="/gallery" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">画廊</a>
+        </div>
       </header>
 
-      <main class="app-main">
-        <section class="card card-input">
-          <h2><span class="badge">INPUT</span> 1. 选择内容图</h2>
-          <div class="field">
-            <label>📸 内容图（必选）</label>
-            <input id="content-input" type="file" accept="image/*" />
-            <div class="preview" id="content-preview">点击上传内容图片</div>
-          </div>
-          <div class="field field--checkbox">
-            <label class="field-checkbox-label" for="upload-downscale-checkbox">
-              <input type="checkbox" id="upload-downscale-checkbox" />
-              上传前缩小大图（最长边 2048；PNG 仍为 PNG）
-            </label>
-          </div>
-          <div class="output-nested sd-output-nested">
-            <h2 class="output-nested-heading"><span class="badge">OUTPUT</span> 结果预览</h2>
-            <div class="result-container">
-              <div id="result-gallery"></div>
-              <div id="result-placeholder" class="sd-result-placeholder" role="status" aria-live="polite">
-                处理完成后，结果将显示在此处
-              </div>
-            </div>
-            <div class="output-actions">
-              <button id="run-btn" class="primary output-run-btn">🚀 开始转换</button>
-              <div id="status-text" class="status-text"></div>
-              <div class="progress-container">
-                <div id="progress-bar" class="progress-bar"></div>
-              </div>
-              <div id="queue-banner" class="queue-banner" hidden></div>
-              <p class="help-text shortcut-hint">快捷键：<kbd>Ctrl</kbd>+<kbd>Enter</kbd> 开始转换</p>
-            </div>
-          </div>
-        </section>
-
-        <section class="card card-param">
-          <h2><span class="badge">PARAM</span> 2. SD 参数</h2>
-
-          <div class="field">
-            <label for="sd-style-select">🎨 选择 LoRA 组合</label>
-            <select id="sd-style-select">
+      <main class="flex flex-1 flex-row overflow-hidden">
+        <aside id="sidebar" class="flex w-[340px] flex-col overflow-y-auto border-r border-[rgba(0,0,0,0.04)] bg-white px-6 py-6">
+          <section class="space-y-3">
+            <div class="section-label">模型</div>
+            <select id="sd-style-select" class="w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400">
               {% for key, name in sd_styles.items() %}
               <option value="{{ key }}">{{ name }}</option>
               {% endfor %}
             </select>
-            <p class="help-text">💡 新模型推荐：DPM++ 2M Karras 20~60 步，CFG 4~9，重绘 0.3~0.6，负向词见下方。</p>
-            <p class="help-text" style="margin-top: 6px;">
-              <a href="/prompt-guide" target="_blank" rel="noopener noreferrer">📘 查看提示词帮助档案</a>
-            </p>
-          </div>
+            <p class="text-xs leading-5 text-slate-500">推荐使用 30 到 50 步，并结合重绘强度微调结果。</p>
+          </section>
 
-          <div class="field scene-filter-shop">
-            <label>🎬 名场面滤镜商店</label>
-            <p class="help-text" style="margin-top: 6px;">
-              点选一套即写入推荐<strong>提示词</strong>与<strong>重绘 / 步数 / CFG</strong>；不改动当前 LoRA 下拉，可再微调。
-            </p>
-            <div class="scene-preset-grid">
-              <button type="button" class="scene-preset-card" data-scene="oil">
-                <span class="scene-preset-title">油画感</span>
-                <span class="scene-preset-desc">厚涂肌理 · 暖光画廊感</span>
-              </button>
-              <button type="button" class="scene-preset-card" data-scene="cyber">
-                <span class="scene-preset-title">赛博霓虹</span>
-                <span class="scene-preset-desc">粉青霓虹 · 雨夜反光</span>
-              </button>
-              <button type="button" class="scene-preset-card" data-scene="ink">
-                <span class="scene-preset-title">水墨</span>
-                <span class="scene-preset-desc">留白晕染 · 写意笔触</span>
-              </button>
-              <button type="button" class="scene-preset-card" data-scene="sunset">
-                <span class="scene-preset-title">黄昏动漫</span>
-                <span class="scene-preset-desc">金色轮廓光 · 氛围天空</span>
-              </button>
-              <button type="button" class="scene-preset-card" data-scene="noir">
-                <span class="scene-preset-title">黑白映画</span>
-                <span class="scene-preset-desc">高对比光影 · 胶片颗粒</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="sd-slider-grid">
-            <div class="field">
-              <label for="denoise-input">重绘强度（推荐 0.3~0.6，越大越像风格）</label>
-              <input id="denoise-input" type="range" min="0.1" max="0.95" step="0.01" value="0.5" />
-              <div class="strength-value" id="denoise-value">0.50</div>
-            </div>
-
-            <div class="field">
-              <label for="steps-input">迭代步数（DPM++ 2M Karras 推荐 20~60）</label>
-              <input id="steps-input" type="range" min="10" max="60" step="1" value="30" />
-              <div class="strength-value" id="steps-value">30</div>
-            </div>
-
-            <div class="field">
-              <label for="guidance-input">CFG Scale（推荐 4~9）</label>
-              <input id="guidance-input" type="range" min="1" max="12" step="0.5" value="7" />
-              <div class="strength-value" id="guidance-value">7</div>
-            </div>
-          </div>
-
-          <div class="field">
-            <label>⚡ 参数套系（一键填重绘 / 步数 / CFG，不改 LoRA 与提示词）</label>
-            <div class="fun-actions sd-triple-row">
-              <button type="button" class="secondary-btn sd-triple-preset" data-preset="light">轻触风格</button>
-              <button type="button" class="secondary-btn sd-triple-preset" data-preset="balanced">均衡默认</button>
-              <button type="button" class="secondary-btn sd-triple-preset" data-preset="heavy">重风格</button>
-            </div>
-          </div>
-
-          <div class="field field--checkbox">
-            <label class="field-checkbox-label" for="quick-mode-input">
-              <input id="quick-mode-input" type="checkbox" />
-              快速模式（优先速度，自动降低步数与分辨率）
+          <section class="sidebar-section space-y-3">
+            <div class="section-label">主题色</div>
+            <label class="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white px-3 py-3 text-xs text-slate-500">
+              <span>背景光谱</span>
+              <input id="bg-color-input" type="color" value="#2d5bff" class="h-9 w-12 cursor-pointer rounded-lg border border-slate-200 bg-transparent p-1" />
             </label>
-          </div>
+          </section>
 
-          <div class="field">
-            <label>🧭 智能分析与风格建议</label>
-            <div class="fun-actions sd-triple-row">
-              <button type="button" id="analyze-input-btn" class="secondary-btn">分析输入图</button>
-              <button type="button" id="apply-suggestion-btn" class="secondary-btn secondary-btn-primary">一键应用建议</button>
+          <section class="sidebar-section space-y-3">
+            <div class="section-label">输入素材</div>
+            <div onclick="document.getElementById('content-input').click()" class="upload-surface cursor-pointer overflow-hidden transition">
+              <div class="flex items-center justify-between px-3 pt-3 text-[11px] font-medium text-slate-500">
+                <span>内容图</span>
+                <span>必选</span>
+              </div>
+              <input id="content-input" type="file" accept="image/*" class="hidden" />
+              <div id="content-preview" class="preview flex aspect-[3/4] items-center justify-center p-3 text-sm text-slate-400">上传内容图</div>
             </div>
-            <p id="analyze-result-text" class="help-text">未分析</p>
-          </div>
+            <label class="flex items-start gap-2 text-xs leading-5 text-slate-500">
+              <input type="checkbox" id="upload-downscale-checkbox" class="mt-0.5 accent-blue-600" />
+              上传前自动压缩大图，最长边限制为 2048。
+            </label>
+          </section>
 
-          <div class="field">
-            <label>🧵 队列控制</label>
-            <div class="fun-actions sd-triple-row">
-              <button type="button" id="pause-job-btn" class="secondary-btn">暂停当前任务</button>
-              <button type="button" id="resume-job-btn" class="secondary-btn">继续当前任务</button>
-              <button type="button" id="cancel-job-btn" class="secondary-btn">取消当前任务</button>
+          <section class="sidebar-section space-y-4">
+            <div class="section-label">参数</div>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <label for="denoise-input" class="text-xs font-medium text-slate-700">重绘强度</label>
+                <span id="denoise-value" class="param-num min-w-[3rem] text-right text-[11px] text-blue-600">0.50</span>
+              </div>
+              <input id="denoise-input" type="range" min="0.1" max="0.95" step="0.01" value="0.5" class="precision-slider" />
             </div>
-          </div>
-
-          <div class="field">
-            <label>📦 批量与导出</label>
-            <div class="fun-actions">
-              <button type="button" id="export-compare-batch-btn" class="secondary-btn">导出批量对比图</button>
-              <button type="button" id="export-nine-grid-btn" class="secondary-btn">导出九宫格</button>
-              <button type="button" id="export-transition-btn" class="secondary-btn">导出前后转场视频</button>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <label for="steps-input" class="text-xs font-medium text-slate-700">迭代步数</label>
+                <span id="steps-value" class="param-num min-w-[3rem] text-right text-[11px] text-blue-600">30</span>
+              </div>
+              <input id="steps-input" type="range" min="10" max="60" step="1" value="30" class="precision-slider" />
             </div>
-          </div>
-
-          <div class="field">
-            <label>🔗 分享中心</label>
-            <div class="fun-actions">
-              <button type="button" id="build-share-card-btn" class="secondary-btn">生成参数卡片+二维码</button>
-              <button type="button" id="build-xhs-cover-btn" class="secondary-btn">导出小红书封面</button>
-              <button type="button" id="build-dy-cover-btn" class="secondary-btn">导出抖音封面</button>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <label for="guidance-input" class="text-xs font-medium text-slate-700">CFG 强度</label>
+                <span id="guidance-value" class="param-num min-w-[3rem] text-right text-[11px] text-blue-600">7</span>
+              </div>
+              <input id="guidance-input" type="range" min="1" max="12" step="0.5" value="7" class="precision-slider" />
             </div>
-            <p id="share-result-text" class="help-text">未生成分享内容</p>
-          </div>
+            <label class="flex items-start gap-2 text-xs leading-5 text-slate-500">
+              <input id="quick-mode-input" type="checkbox" class="mt-0.5 accent-blue-600" />
+              快速模式：优先速度，自动降低部分步数与分辨率。
+            </label>
+          </section>
 
-          <div class="field">
-            <label for="prompt-input">🧠 正向提示词（可选）</label>
-            <textarea id="prompt-input" rows="3" placeholder="例如：masterpiece, best quality, anime style, detailed face, clean lineart, soft lighting">masterpiece, best quality, anime style, detailed face, clean lineart, soft lighting</textarea>
-          </div>
+          <section class="sidebar-section space-y-4">
+            <div class="section-label">提示词</div>
+            <textarea id="prompt-input" class="min-h-[96px] w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400" placeholder="输入正向提示词"></textarea>
+            <div id="positive-chips" class="flex flex-wrap gap-2">
+              <button type="button" data-target="positive" data-word="杰作" class="tool-btn">+ 杰作</button>
+              <button type="button" data-target="positive" data-word="电影感" class="tool-btn">+ 电影感</button>
+              <button type="button" data-target="positive" data-word="细腻光影" class="tool-btn">+ 细腻光影</button>
+            </div>
+            <textarea id="negative-prompt-input" class="min-h-[88px] w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400" placeholder="输入负向提示词"></textarea>
+            <div id="negative-chips" class="flex flex-wrap gap-2">
+              <button type="button" data-target="negative" data-word="模糊" class="tool-btn">+ 模糊</button>
+              <button type="button" data-target="negative" data-word="水印" class="tool-btn">+ 水印</button>
+              <button type="button" data-target="negative" data-word="畸形" class="tool-btn">+ 畸形</button>
+            </div>
+            <select id="positive-preset-select" class="w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400">
+              <option value="">选择正向预设并追加</option>
+              <option value="portrait">人像动漫</option>
+              <option value="strong">风格更重</option>
+              <option value="scene">场景增强</option>
+            </select>
+            <select id="negative-preset-select" class="w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-400">
+              <option value="">选择负向预设并追加</option>
+              <option value="portrait">默认推荐</option>
+              <option value="noHires">关闭高修复</option>
+              <option value="strong">强化去噪</option>
+              <option value="scene">透视修正</option>
+            </select>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" id="clear-positive-btn" class="tool-btn">清空正向</button>
+              <button type="button" id="clear-negative-btn" class="tool-btn">清空负向</button>
+              <button type="button" id="reset-prompts-btn" class="tool-btn tool-btn-primary">恢复默认</button>
+            </div>
+          </section>
 
-          <div class="field">
-            <label for="negative-prompt-input">🚫 负向提示词（可选）</label>
-            <textarea id="negative-prompt-input" rows="3" placeholder="推荐：(worst quality, low quality), (zombie, interlocked fingers)">(worst quality, low quality), (zombie, interlocked fingers)</textarea>
-          </div>
+          <section class="sidebar-section space-y-3">
+            <div class="section-label">任务管理</div>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" id="pause-job-btn" class="tool-btn">暂停</button>
+              <button type="button" id="resume-job-btn" class="tool-btn">继续</button>
+              <button type="button" id="cancel-job-btn" class="tool-btn">取消</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <button type="button" id="analyze-input-btn" class="tool-btn">分析输入</button>
+              <button type="button" id="apply-suggestion-btn" class="tool-btn tool-btn-primary">应用建议</button>
+            </div>
+            <p id="analyze-result-text" class="text-xs leading-5 text-slate-500">尚未分析。</p>
+          </section>
 
-          <div class="field prompt-helper">
-            <label>⚡ 提示词快捷添加</label>
-            <div class="prompt-helper-grid">
-              <div class="prompt-helper-col">
-                <div class="chip-title">正向快捷词</div>
-                <select id="positive-preset-select">
-                  <option value="">选择正向预设并追加</option>
-                  <option value="portrait">人像转动漫（稳妥）</option>
-                  <option value="strong">风格更重（插画感）</option>
-                  <option value="scene">建筑场景（背景向）</option>
-                </select>
-                <div class="quick-chips" id="positive-chips">
-                  <button type="button" data-target="positive" data-word="masterpiece">+ masterpiece</button>
-                  <button type="button" data-target="positive" data-word="best quality">+ best quality</button>
-                  <button type="button" data-target="positive" data-word="anime style">+ anime style</button>
-                  <button type="button" data-target="positive" data-word="detailed face">+ detailed face</button>
-                  <button type="button" data-target="positive" data-word="clean lineart">+ clean lineart</button>
+          <section class="sidebar-section space-y-3">
+            <div class="section-label">导出</div>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" id="export-compare-batch-btn" class="tool-btn">对比图</button>
+              <button type="button" id="export-nine-grid-btn" class="tool-btn">九宫格</button>
+              <button type="button" id="export-transition-btn" class="tool-btn">视频</button>
+              <button type="button" id="build-share-card-btn" class="tool-btn">分享卡</button>
+              <button type="button" id="build-xhs-cover-btn" class="tool-btn">小红书</button>
+              <button type="button" id="build-dy-cover-btn" class="tool-btn">抖音</button>
+            </div>
+            <p id="share-result-text" class="text-xs leading-5 text-slate-500">尚未生成分享素材。</p>
+            <div id="resource-monitor-text" class="text-xs text-slate-500">资源监控加载中...</div>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" id="sd-random-params-btn" class="tool-btn">随机参数</button>
+              <button type="button" id="sd-copy-recipe-btn" class="tool-btn">复制配方</button>
+              <button type="button" id="sd-paste-recipe-btn" class="tool-btn">粘贴配方</button>
+            </div>
+          </section>
+
+          <div class="sidebar-section mt-auto space-y-3">
+            <div class="grid grid-cols-2 gap-2">
+              <button id="run-btn" class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(45,91,255,0.24)] transition duration-200 hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-[0_16px_38px_rgba(45,91,255,0.28)] active:scale-[0.96]">
+                开始生成
+              </button>
+              <button id="cancel-btn" class="tool-btn">取消任务</button>
+            </div>
+            <p class="text-xs leading-5 text-slate-500">右侧结果区布局与风格迁移页面保持一致，仅保留 SD 的生成与导出逻辑。</p>
+          </div>
+        </aside>
+
+        <section id="main-content" class="relative flex flex-1 items-center justify-center overflow-hidden">
+          <div id="canvas-wrapper">
+            <canvas id="warp-canvas"></canvas>
+          </div>
+          <div id="workspace-shell" class="relative z-10 flex h-full w-full flex-col gap-4">
+            <div class="flex min-h-6 items-center justify-between gap-4">
+              <div id="status-text" class="sr-only"></div>
+              <div class="ml-auto flex items-center gap-3">
+                <div id="queue-banner" hidden class="rounded-full border border-slate-200 bg-white/85 px-3 py-1 text-[11px] text-slate-500"></div>
+              </div>
+            </div>
+
+            <div id="result-container" class="relative mx-auto flex max-h-[80vh] min-h-0 w-full max-w-[min(1100px,100%)] flex-1 items-center justify-center overflow-hidden rounded-[10px] border border-white/80 bg-white p-3 shadow-[0_40px_100px_-20px_rgba(0,0,0,0.1),0_0_1px_rgba(0,0,0,0.1)] backdrop-blur-xl">
+              <div id="progress-hud" class="result-stage hidden rounded-2xl px-4 py-3">
+                <div class="flex items-center gap-3">
+                  <div class="h-2.5 w-2.5 rounded-full bg-blue-400"></div>
+                  <div class="text-[11px] font-bold tracking-[0.2em] text-slate-500">渲染进度</div>
+                  <div id="progress-value" class="mono ml-auto text-[12px] text-blue-300">0%</div>
+                </div>
+                <div id="progress-phase" class="mt-2 text-sm font-semibold text-slate-700">等待任务开始</div>
+                <div class="mt-3 h-1.5 rounded-full bg-slate-200">
+                  <div id="progress-meter" class="h-1.5 rounded-full bg-gradient-to-r from-blue-500 via-cyan-400 to-sky-300 transition-all duration-300" style="width: 0%"></div>
                 </div>
               </div>
-              <div class="prompt-helper-col">
-                <div class="chip-title">负向快捷词</div>
-                <select id="negative-preset-select">
-                  <option value="">选择负向预设并追加</option>
-                  <option value="portrait">新模型推荐（默认）</option>
-                  <option value="noHires">无 Hires.fix 时使用</option>
-                  <option value="strong">强风格去噪点</option>
-                  <option value="scene">场景透视修正</option>
-                </select>
-                <div class="quick-chips" id="negative-chips">
-                  <button type="button" data-target="negative" data-word="lowres">+ lowres</button>
-                  <button type="button" data-target="negative" data-word="blurry">+ blurry</button>
-                  <button type="button" data-target="negative" data-word="bad anatomy">+ bad anatomy</button>
-                  <button type="button" data-target="negative" data-word="bad hands">+ bad hands</button>
-                  <button type="button" data-target="negative" data-word="watermark">+ watermark</button>
-                  <button type="button" data-target="negative" data-word="zombie">+ zombie</button>
-                  <button type="button" data-target="negative" data-word="interlocked fingers">+ interlocked fingers</button>
+              <div id="loading-overlay" class="processing-overlay hidden"></div>
+              <div id="generating-overlay">
+                <canvas id="gen-canvas"></canvas>
+                <div class="gen-copy absolute inset-x-0 top-10 flex items-start justify-end px-10">
+                  <div class="rounded-2xl border border-blue-500/20 bg-black/30 px-4 py-3 backdrop-blur-xl">
+                    <div id="gen-percent" class="mono text-right text-[42px] font-black tracking-tighter text-blue-500">0%</div>
+                    <div class="text-right text-[10px] font-bold uppercase tracking-[0.38em] text-blue-300/80">正在重构神经元数据...</div>
+                  </div>
+                </div>
+                <div class="gen-copy absolute inset-x-0 bottom-6 flex items-center justify-between px-8">
+                  <span class="mono text-[10px] uppercase tracking-[0.28em] text-blue-200/35">Sampling: DPM++ 2M Karras</span>
+                  <span id="gen-steps" class="mono text-[10px] uppercase tracking-[0.28em] text-blue-200/35">Steps: 0/35</span>
                 </div>
               </div>
+              <img id="result-image" src="" class="hidden max-h-[calc(80vh-24px)] w-auto rounded-sm" alt="" />
+              <div id="result-gallery" class="flex h-full w-full items-center justify-center gap-6 overflow-auto p-6"></div>
+              <div id="result-placeholder" class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm leading-6 text-slate-400">
+                上传内容图并开始渲染后，结果会在这里显示。
+              </div>
             </div>
-            <div class="prompt-actions">
-              <button type="button" id="clear-positive-btn" class="secondary-btn">清空正向</button>
-              <button type="button" id="clear-negative-btn" class="secondary-btn">清空负向</button>
-              <button type="button" id="reset-prompts-btn" class="secondary-btn secondary-btn-primary">一键恢复默认词</button>
+
+            <div class="grid grid-cols-[minmax(160px,1fr)_320px] items-center gap-5">
+              <div class="h-[2px] rounded-full bg-slate-200">
+                <div id="progress-bar" class="h-[2px] rounded-full bg-gradient-to-r from-blue-600 to-cyan-400" style="width: 0%"></div>
+              </div>
+              <div class="flex h-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/78 px-5 text-center text-xs text-slate-500 backdrop-blur-sm">
+                左侧调整模型与强度，右侧查看结果与下载入口。
+              </div>
             </div>
-            <div class="fun-actions" role="group" aria-label="趣味快捷">
-              <button type="button" id="sd-random-params-btn" class="secondary-btn">🎲 随机参数</button>
-              <button type="button" id="sd-copy-recipe-btn" class="secondary-btn">📋 复制配方</button>
-              <button type="button" id="sd-paste-recipe-btn" class="secondary-btn">📥 粘贴配方</button>
-            </div>
-            <p class="help-text">💡 现在已分为正向和负向两个分类，互不干扰、可分别追加。</p>
           </div>
         </section>
       </main>
-
-      <footer class="app-footer">
-        <span>🎨 支持 LoRA + 正向提示词 + 负向提示词</span>
-      </footer>
     </div>
 
     <script src="/static/history_local.js"></script>
@@ -249,5 +445,79 @@
     <script src="/static/client_helpers.js"></script>
     <script src="/static/share_card.js"></script>
     <script src="/static/sd.js"></script>
+    <script>
+      const warpCanvas = document.getElementById("warp-canvas");
+      const warpCtx = warpCanvas.getContext("2d");
+      const mainContent = document.getElementById("main-content");
+      const canvasWrapper = document.getElementById("canvas-wrapper");
+      let warpWidth = 0;
+      let warpHeight = 0;
+      let warpCx = 0;
+      let warpCy = 0;
+      let warpStars = [];
+      let warpRunning = false;
+      let warpFrame = 0;
+
+      function initWarpCanvas() {
+        const rect = mainContent ? mainContent.getBoundingClientRect() : { width: 0, height: 0 };
+        const nextWidth = Math.max(320, Math.round((canvasWrapper && canvasWrapper.clientWidth) || (mainContent && mainContent.clientWidth) || rect.width || 0));
+        const nextHeight = Math.max(320, Math.round((canvasWrapper && canvasWrapper.clientHeight) || (mainContent && mainContent.clientHeight) || rect.height || 0));
+        warpWidth = warpCanvas.width = nextWidth;
+        warpHeight = warpCanvas.height = nextHeight;
+        warpCx = warpWidth / 2;
+        warpCy = warpHeight / 2;
+        warpStars = Array.from({ length: 900 }, () => ({
+          x: Math.random() * warpWidth,
+          y: Math.random() * warpHeight,
+          z: Math.random() * warpWidth,
+          pz: Math.random() * warpWidth,
+        }));
+      }
+
+      function renderWarp() {
+        if (!warpRunning) return;
+        warpCtx.fillStyle = "rgba(255,255,255,0.16)";
+        warpCtx.fillRect(0, 0, warpWidth, warpHeight);
+        warpStars.forEach((star) => {
+          star.pz = star.z;
+          star.z -= 20;
+          if (star.z < 1) {
+            star.z = warpWidth;
+            star.pz = star.z;
+          }
+          const x = (star.x - warpCx) * (warpWidth / star.z) + warpCx;
+          const y = (star.y - warpCy) * (warpWidth / star.z) + warpCy;
+          const px = (star.x - warpCx) * (warpWidth / star.pz) + warpCx;
+          const py = (star.y - warpCy) * (warpWidth / star.pz) + warpCy;
+          warpCtx.strokeStyle = `rgba(45,91,255,${1 - star.z / warpWidth})`;
+          warpCtx.lineWidth = 1.4;
+          warpCtx.beginPath();
+          warpCtx.moveTo(px, py);
+          warpCtx.lineTo(x, y);
+          warpCtx.stroke();
+        });
+        warpFrame = requestAnimationFrame(renderWarp);
+      }
+
+      function startWarp() {
+        initWarpCanvas();
+        warpRunning = true;
+        warpCanvas.classList.add("active");
+        cancelAnimationFrame(warpFrame);
+        renderWarp();
+      }
+
+      function stopWarp() {
+        warpRunning = false;
+        cancelAnimationFrame(warpFrame);
+        warpCanvas.classList.remove("active");
+        warpCtx.clearRect(0, 0, warpWidth, warpHeight);
+      }
+
+      window.addEventListener("resize", initWarpCanvas);
+      initWarpCanvas();
+      window.startWarp = startWarp;
+      window.stopWarp = stopWarp;
+    </script>
   </body>
 </html>

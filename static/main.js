@@ -12,19 +12,53 @@ const modelSelect = document.getElementById("model-select");
 const statusText = document.getElementById("status-text");
 const progressBar = document.getElementById("progress-bar");
 const resultGallery = document.getElementById("result-gallery");
+const canvasArea = document.getElementById("canvas-area");
+const resultContainer = document.getElementById("result-container");
+const loadingOverlay = document.getElementById("loading-overlay");
+const resultImage = document.getElementById("result-image");
+const processingCanvas = document.getElementById("triger-warp-canvas");
+const processingDetail = document.getElementById("processing-detail");
+const processingSteps = document.getElementById("processing-steps");
+const processingModel = document.getElementById("processing-model");
+const processingPercent = document.getElementById("processing-percent");
 const strengthInput = document.getElementById("strength-input");
 const strengthValue = document.getElementById("strength-value");
 const modelPicker = document.getElementById("model-picker");
+const processingCtx = processingCanvas ? processingCanvas.getContext("2d") : null;
 
 /** 下载文件名前缀（与 /api/result 的 label 对应） */
 const PAGE_DOWNLOAD_LABEL = "style-transfer";
 
 let currentJobId = null;
 let pollingTimer = null;
+let processingResizeBound = false;
 
 /** 多图队列（仅当前页内存） */
 let queueFiles = [];
 let queueIdx = 0;
+
+const PROCESSING_COPY = [
+  { until: 12, text: "奇点已点亮，正在坍缩噪声场。" },
+  { until: 38, text: "蓝色流光开始扩散，图像结构正在浮现。" },
+  { until: 68, text: "波纹穿过画布，细节像墨迹一样晕开。" },
+  { until: 92, text: "神经纹理进入收束阶段，准备定格最终结果。" },
+  { until: 101, text: "终帧曝光中，正在锁定生成结果。" },
+];
+
+const processingState = {
+  active: false,
+  progress: 0,
+  frameId: 0,
+  startTime: 0,
+  lastTs: 0,
+  ripples: [],
+  particles: [],
+  previewImage: null,
+  previewSrc: "",
+  revealBoost: 0,
+  flashUntil: 0,
+  lastRippleProgress: 0,
+};
 
 const PHASE_LABELS = {
   pending: "排队",
@@ -57,7 +91,7 @@ function notifyDone(title, body) {
 }
 
 function playCompleteCelebration() {
-  const el = document.querySelector(".card-output .result-container");
+  const el = document.getElementById("result-container") || document.querySelector(".result-container");
   if (!el) return;
   el.classList.remove("celebrate-result");
   requestAnimationFrame(() => {
@@ -65,6 +99,383 @@ function playCompleteCelebration() {
     el.classList.add("celebrate-result");
     setTimeout(() => el.classList.remove("celebrate-result"), 2100);
   });
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function resizeProcessingCanvas() {
+  if (!processingCanvas || !resultContainer) return;
+  const rect = resultContainer.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  processingCanvas.width = Math.round(rect.width * dpr);
+  processingCanvas.height = Math.round(rect.height * dpr);
+  processingCanvas.style.width = `${rect.width}px`;
+  processingCanvas.style.height = `${rect.height}px`;
+  if (processingCtx) processingCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function ensureProcessingResizeBinding() {
+  if (processingResizeBound) return;
+  processingResizeBound = true;
+  window.addEventListener("resize", () => {
+    if (!processingState.active) return;
+    resizeProcessingCanvas();
+    resetProcessingParticles();
+  });
+}
+
+function getProcessingPreviewSrc() {
+  if (contentInput && contentInput.files && contentInput.files[0]) {
+    if (processingState.previewSrc && processingState.previewSrc.startsWith("blob:")) {
+      URL.revokeObjectURL(processingState.previewSrc);
+    }
+    processingState.previewSrc = URL.createObjectURL(contentInput.files[0]);
+    return processingState.previewSrc;
+  }
+  if (resultImage && resultImage.src) return resultImage.src;
+  return "";
+}
+
+function primeProcessingPreview() {
+  const src = getProcessingPreviewSrc();
+  if (!src) {
+    processingState.previewImage = null;
+    return;
+  }
+  const img = new Image();
+  img.src = src;
+  processingState.previewImage = img;
+}
+
+function resetProcessingParticles() {
+  if (!processingCanvas || !resultContainer) return;
+  const rect = resultContainer.getBoundingClientRect();
+  const width = rect.width || processingCanvas.clientWidth || 0;
+  const height = rect.height || processingCanvas.clientHeight || 0;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const count = Math.max(140, Math.round((width * height) / 3800));
+  processingState.particles = Array.from({ length: count }, () => {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.3 + Math.random() * 1.9;
+    return {
+      angle,
+      radius: Math.random() * 8,
+      speed,
+      x: centerX,
+      y: centerY,
+      px: centerX,
+      py: centerY,
+      size: 0.8 + Math.random() * 2.2,
+      hue: Math.random() > 0.18 ? "45,91,255" : "123,92,255",
+      alpha: 0.2 + Math.random() * 0.6,
+      drift: (Math.random() - 0.5) * 0.22,
+    };
+  });
+}
+
+function spawnProcessingRipple(progress, forced = false) {
+  const rect = resultContainer ? resultContainer.getBoundingClientRect() : null;
+  const width = rect?.width || processingCanvas?.clientWidth || 0;
+  const height = rect?.height || processingCanvas?.clientHeight || 0;
+  const maxRadius = Math.hypot(width, height) * 0.58;
+  if (!maxRadius) return;
+  processingState.ripples.push({
+    radius: forced ? 12 : 18 + progress * 0.18,
+    speed: 3.6 + progress * 0.016,
+    alpha: forced ? 0.95 : 0.78,
+    width: 40 + progress * 0.32,
+    maxRadius,
+  });
+  if (processingState.ripples.length > 8) processingState.ripples.shift();
+}
+
+function syncProcessingMeta(progress, data = {}) {
+  const safeProgress = clamp(Math.round(progress || 0), 0, 100);
+  const currentCopy = PROCESSING_COPY.find((item) => safeProgress <= item.until) || PROCESSING_COPY[PROCESSING_COPY.length - 1];
+  if (processingDetail) processingDetail.textContent = currentCopy.text;
+
+  const reportedSteps = Number(data.step || data.current_step || 0);
+  const reportedTotal = Number(data.total_steps || data.steps || 0);
+  const totalSteps = reportedTotal > 0 ? reportedTotal : 30;
+  const currentSteps =
+    reportedSteps > 0 ? Math.min(reportedSteps, totalSteps) : Math.min(totalSteps, Math.max(1, Math.round((safeProgress / 100) * totalSteps)));
+
+  if (processingSteps) {
+    const left = String(currentSteps).padStart(2, "0");
+    const right = String(totalSteps).padStart(2, "0");
+    processingSteps.textContent = `Steps ${left} / ${right}`;
+  }
+  if (processingPercent) processingPercent.textContent = `${String(safeProgress).padStart(2, "0")}%`;
+
+  if (processingModel) {
+    const sampler = data.sampler || data.phase_detail || "DPM++ 2M Karras";
+    processingModel.textContent = `Sampler · ${String(sampler).slice(0, 42)}`;
+  }
+}
+
+function drawProcessingPreview(width, height, centerX, centerY, progress) {
+  const img = processingState.previewImage;
+  if (!img || !img.complete || !img.naturalWidth || !processingCtx) return;
+  const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
+  const drawWidth = img.naturalWidth * scale;
+  const drawHeight = img.naturalHeight * scale;
+  const drawX = (width - drawWidth) / 2;
+  const drawY = (height - drawHeight) / 2;
+
+  processingCtx.save();
+  processingCtx.globalAlpha = 0.08 + progress * 0.0018;
+  processingCtx.filter = `blur(${Math.max(18 - progress * 0.12, 4)}px) saturate(0.7) brightness(0.9)`;
+  processingCtx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+  processingCtx.restore();
+
+  processingState.ripples.forEach((ripple, index) => {
+    processingCtx.save();
+    processingCtx.beginPath();
+    processingCtx.arc(centerX, centerY, ripple.radius, 0, Math.PI * 2);
+    processingCtx.lineWidth = ripple.width;
+    processingCtx.stroke();
+    processingCtx.clip();
+    processingCtx.globalAlpha = clamp(0.1 + progress * 0.003 + index * 0.04, 0, 0.68);
+    processingCtx.filter = `blur(${Math.max(12 - progress * 0.08 - index * 1.2, 1)}px) saturate(${1 + progress * 0.003}) brightness(${0.78 + progress * 0.0032})`;
+    processingCtx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+    processingCtx.restore();
+  });
+}
+
+function drawProcessingHud(width, progress) {
+  if (!processingCtx) return;
+  processingCtx.save();
+  processingCtx.font = "600 28px 'JetBrains Mono', monospace";
+  processingCtx.textAlign = "right";
+  processingCtx.textBaseline = "top";
+  processingCtx.shadowBlur = 26;
+  processingCtx.shadowColor = "rgba(45, 91, 255, 0.42)";
+  processingCtx.fillStyle = "rgba(219, 230, 255, 0.96)";
+  processingCtx.fillText(`${String(Math.round(progress)).padStart(2, "0")}%`, width - 28, 24);
+  processingCtx.font = "500 10px 'JetBrains Mono', monospace";
+  processingCtx.fillStyle = "rgba(115, 152, 255, 0.72)";
+  processingCtx.fillText("GENERATION PROGRESS", width - 28, 58);
+  processingCtx.restore();
+}
+
+function animateProcessingFrame(ts) {
+  if (!processingState.active || !processingCtx || !processingCanvas) return;
+  const rect = resultContainer ? resultContainer.getBoundingClientRect() : null;
+  const width = rect?.width || processingCanvas.clientWidth;
+  const height = rect?.height || processingCanvas.clientHeight;
+  const cx = width / 2;
+  const cy = height / 2;
+  const delta = processingState.lastTs ? Math.min((ts - processingState.lastTs) / 16.67, 2.2) : 1;
+  processingState.lastTs = ts;
+
+  processingCtx.clearRect(0, 0, width, height);
+  processingCtx.fillStyle = "rgba(1, 4, 14, 0.22)";
+  processingCtx.fillRect(0, 0, width, height);
+
+  if (processingState.progress - processingState.lastRippleProgress >= 12) {
+    processingState.lastRippleProgress = processingState.progress;
+    spawnProcessingRipple(processingState.progress);
+  }
+
+  processingState.ripples = processingState.ripples
+    .map((ripple) => ({
+      ...ripple,
+      radius: ripple.radius + ripple.speed * delta,
+      alpha: ripple.alpha * 0.992,
+    }))
+    .filter((ripple) => ripple.radius < ripple.maxRadius && ripple.alpha > 0.04);
+
+  drawProcessingPreview(width, height, cx, cy, processingState.progress);
+
+  processingState.ripples.forEach((ripple, index) => {
+    const gradient = processingCtx.createRadialGradient(cx, cy, Math.max(0, ripple.radius - ripple.width * 0.6), cx, cy, ripple.radius + ripple.width);
+    gradient.addColorStop(0, "rgba(45, 91, 255, 0)");
+    gradient.addColorStop(0.45, `rgba(45, 91, 255, ${0.08 * ripple.alpha})`);
+    gradient.addColorStop(0.72, `rgba(103, 179, 255, ${0.32 * ripple.alpha})`);
+    gradient.addColorStop(1, "rgba(45, 91, 255, 0)");
+    processingCtx.save();
+    processingCtx.strokeStyle = index % 2 === 0 ? gradient : `rgba(129, 110, 255, ${0.18 * ripple.alpha})`;
+    processingCtx.lineWidth = ripple.width;
+    processingCtx.beginPath();
+    processingCtx.arc(cx, cy, ripple.radius, 0, Math.PI * 2);
+    processingCtx.stroke();
+    processingCtx.restore();
+  });
+
+  processingState.particles.forEach((particle) => {
+    particle.px = particle.x;
+    particle.py = particle.y;
+    particle.radius += particle.speed * delta * (0.7 + processingState.progress / 120);
+    particle.angle += particle.drift * delta;
+    particle.x = cx + Math.cos(particle.angle) * particle.radius;
+    particle.y = cy + Math.sin(particle.angle) * particle.radius * 0.72;
+    if (
+      particle.x < -40 ||
+      particle.x > width + 40 ||
+      particle.y < -40 ||
+      particle.y > height + 40
+    ) {
+      particle.radius = Math.random() * 12;
+      particle.angle = Math.random() * Math.PI * 2;
+      particle.x = cx;
+      particle.y = cy;
+      particle.px = cx;
+      particle.py = cy;
+    }
+
+    processingCtx.save();
+    processingCtx.strokeStyle = `rgba(${particle.hue}, ${0.14 + particle.alpha * 0.16})`;
+    processingCtx.lineWidth = particle.size * 0.9;
+    processingCtx.beginPath();
+    processingCtx.moveTo(particle.px, particle.py);
+    processingCtx.lineTo(particle.x, particle.y);
+    processingCtx.stroke();
+
+    processingCtx.fillStyle = `rgba(${particle.hue}, ${0.32 + particle.alpha * 0.58})`;
+    processingCtx.shadowBlur = 16;
+    processingCtx.shadowColor = `rgba(${particle.hue}, 0.4)`;
+    processingCtx.beginPath();
+    processingCtx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+    processingCtx.fill();
+    processingCtx.restore();
+  });
+
+  const scanOffset = (ts - processingState.startTime) * 0.14;
+  [0, height * 0.33].forEach((offset, idx) => {
+    const y = ((scanOffset + offset) % (height + 180)) - 90;
+    const line = processingCtx.createLinearGradient(0, y, 0, y + 32);
+    line.addColorStop(0, "rgba(45, 91, 255, 0)");
+    line.addColorStop(0.45, idx === 0 ? "rgba(118, 171, 255, 0.12)" : "rgba(155, 132, 255, 0.10)");
+    line.addColorStop(0.55, idx === 0 ? "rgba(147, 209, 255, 0.36)" : "rgba(165, 133, 255, 0.26)");
+    line.addColorStop(1, "rgba(45, 91, 255, 0)");
+    processingCtx.fillStyle = line;
+    processingCtx.fillRect(0, y, width, 34);
+  });
+
+  const coreGlow = processingCtx.createRadialGradient(cx, cy, 2, cx, cy, 88 + processingState.progress * 0.4);
+  coreGlow.addColorStop(0, "rgba(255,255,255,0.98)");
+  coreGlow.addColorStop(0.08, "rgba(121, 168, 255, 0.95)");
+  coreGlow.addColorStop(0.18, "rgba(45, 91, 255, 0.45)");
+  coreGlow.addColorStop(1, "rgba(45, 91, 255, 0)");
+  processingCtx.fillStyle = coreGlow;
+  processingCtx.beginPath();
+  processingCtx.arc(cx, cy, 88 + processingState.progress * 0.4, 0, Math.PI * 2);
+  processingCtx.fill();
+
+  processingCtx.fillStyle = "rgba(255,255,255,0.98)";
+  processingCtx.beginPath();
+  processingCtx.arc(cx, cy, 2 + Math.sin(ts * 0.016) * 0.6, 0, Math.PI * 2);
+  processingCtx.fill();
+
+  if (processingState.flashUntil > ts) {
+    const flashProgress = 1 - (processingState.flashUntil - ts) / 520;
+    const sweepX = -width * 0.2 + flashProgress * width * 1.4;
+    const sweep = processingCtx.createLinearGradient(sweepX - 140, 0, sweepX + 140, 0);
+    sweep.addColorStop(0, "rgba(255,255,255,0)");
+    sweep.addColorStop(0.5, "rgba(180, 212, 255, 0.55)");
+    sweep.addColorStop(1, "rgba(255,255,255,0)");
+    processingCtx.fillStyle = sweep;
+    processingCtx.fillRect(0, 0, width, height);
+    processingCtx.fillStyle = `rgba(210, 230, 255, ${0.2 * (1 - flashProgress)})`;
+    processingCtx.fillRect(0, 0, width, height);
+  }
+
+  drawProcessingHud(width, processingState.progress);
+  processingState.frameId = requestAnimationFrame(animateProcessingFrame);
+}
+
+function setProcessingProgress(progress, data = {}) {
+  processingState.progress = clamp(progress, 0, 100);
+  syncProcessingMeta(processingState.progress, data);
+}
+
+const trigerWarp = {
+  start(data = {}) {
+    setProcessingOverlay(true, data);
+  },
+  update(progress, data = {}) {
+    setProcessingProgress(progress, { ...data, progress });
+  },
+  finish() {
+    revealProcessingOverlay();
+  },
+  stop() {
+    setProcessingOverlay(false);
+  },
+  getCenter() {
+    const rect = resultContainer ? resultContainer.getBoundingClientRect() : { width: 0, height: 0 };
+    return { cx: rect.width / 2, cy: rect.height / 2 };
+  },
+};
+
+function setProcessingOverlay(active, data = {}) {
+  if (!loadingOverlay) return;
+  if (active) {
+    ensureProcessingResizeBinding();
+    resizeProcessingCanvas();
+    if (!processingState.active) {
+      processingState.active = true;
+      processingState.startTime = performance.now();
+      processingState.lastTs = 0;
+      processingState.ripples = [];
+      processingState.lastRippleProgress = 0;
+      processingState.flashUntil = 0;
+      primeProcessingPreview();
+      resetProcessingParticles();
+      spawnProcessingRipple(0, true);
+      loadingOverlay.classList.remove("revealing");
+      loadingOverlay.classList.add("active");
+      processingCanvas.classList.add("active");
+      if (resultImage) resultImage.classList.add("is-generating");
+      processingState.frameId = requestAnimationFrame(animateProcessingFrame);
+    }
+    setProcessingProgress(data.progress || 0, data);
+    return;
+  }
+
+  loadingOverlay.classList.remove("active", "revealing");
+  processingCanvas.classList.remove("active");
+  if (processingState.frameId) cancelAnimationFrame(processingState.frameId);
+  processingState.active = false;
+  processingState.frameId = 0;
+  processingState.lastTs = 0;
+  processingState.ripples = [];
+  processingState.particles = [];
+  if (resultImage) resultImage.classList.remove("is-generating");
+  if (processingCtx && processingCanvas) {
+    processingCtx.clearRect(0, 0, processingCanvas.clientWidth, processingCanvas.clientHeight);
+  }
+}
+
+function revealProcessingOverlay() {
+  if (!loadingOverlay) return;
+  let revealed = false;
+  const doReveal = () => {
+    if (revealed) return;
+    revealed = true;
+    processingState.progress = 100;
+    syncProcessingMeta(100, { progress: 100, phase_detail: "处理完成" });
+    processingState.flashUntil = performance.now() + 520;
+    loadingOverlay.classList.add("revealing");
+    window.setTimeout(() => {
+      setProcessingOverlay(false);
+    }, 620);
+    window.setTimeout(() => {
+      if (resultImage) resultImage.classList.remove("is-generating");
+    }, 90);
+  };
+
+  if (resultImage && !resultImage.complete) {
+    resultImage.addEventListener("load", doReveal, { once: true });
+    window.setTimeout(doReveal, 1200);
+    return;
+  }
+
+  doReveal();
 }
 
 function randomizeStyleParams() {
@@ -482,7 +893,13 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
     img.alt = altText;
     img.loading = imageIndex > 0 ? "lazy" : "eager";
     img.style.display = "block";
+    img.classList.add("fade-in");
     wrap.appendChild(img);
+  }
+  if (imageIndex === 0 && resultImage) {
+    resultImage.src = resultSrc;
+    resultImage.classList.remove("hidden");
+    resultImage.classList.add("fade-in");
   }
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -645,6 +1062,12 @@ async function startStyleTransfer() {
   statusText.textContent = "正在提交任务到服务器...";
   progressBar.style.width = "0%";
   clearGallery();
+  trigerWarp.start({ progress: 0, sampler: "DPM++ 2M Karras" });
+  if (resultImage) {
+    resultImage.classList.remove("fade-in");
+    if (resultImage.src) resultImage.classList.remove("hidden");
+    resultImage.classList.add("is-generating");
+  }
 
   try {
     await submitQueueStyleJob();
@@ -654,6 +1077,7 @@ async function startStyleTransfer() {
     queueFiles = [];
     queueIdx = 0;
     updateQueueBanner();
+    trigerWarp.stop();
   } finally {
     setRunButtonsDisabled(false);
   }
@@ -663,6 +1087,7 @@ async function cancelCurrentJob() {
   if (!currentJobId) return;
   setCancelEnabled(false);
   statusText.textContent = "取消请求已发送...";
+  trigerWarp.update(processingState.progress, {});
   try {
     const resp = await fetch(`/api/cancel/${currentJobId}`, { method: "POST" });
     const data = await resp.json();
@@ -692,6 +1117,7 @@ async function pollStatus() {
     if (status === "queued") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(true);
+      trigerWarp.update(data.progress || 0, data);
       pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
@@ -699,6 +1125,7 @@ async function pollStatus() {
     if (status === "pending") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(false);
+      trigerWarp.update(data.progress || 0, data);
       pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
@@ -706,6 +1133,7 @@ async function pollStatus() {
     if (status === "running") {
       statusText.textContent = formatPhaseLine(data);
       setCancelEnabled(true);
+      trigerWarp.update(data.progress || 0, data);
       pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
@@ -731,15 +1159,17 @@ async function pollStatus() {
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
-      playCompleteCelebration();
       if (kind === "batch" && count > 1) showBatchResults(currentJobId, count);
       else showSingleResult(currentJobId);
+      trigerWarp.finish();
+      playCompleteCelebration();
       return;
     }
 
     if (status === "cancelled") {
       statusText.textContent = "任务已取消（已生成的结果保留）";
       setCancelEnabled(false);
+      trigerWarp.stop();
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
@@ -751,6 +1181,7 @@ async function pollStatus() {
     if (status === "error") {
       statusText.textContent = "任务失败: " + (data.error || "未知错误");
       setCancelEnabled(false);
+      trigerWarp.stop();
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
@@ -763,6 +1194,7 @@ async function pollStatus() {
     console.error(e);
     statusText.textContent = "查询状态失败";
     setCancelEnabled(false);
+    trigerWarp.stop();
   }
 }
 
@@ -770,6 +1202,7 @@ async function rerunJob(oldJobId) {
   statusText.textContent = "正在重跑任务...";
   progressBar.style.width = "0%";
   clearGallery();
+  trigerWarp.start({ progress: 0, sampler: "DPM++ 2M Karras" });
   try {
     const resp = await fetch(`/api/rerun/${oldJobId}`, { method: "POST" });
     const data = await resp.json();
@@ -780,6 +1213,7 @@ async function rerunJob(oldJobId) {
   } catch (e) {
     console.error(e);
     alert("重跑失败: " + e.message);
+    trigerWarp.stop();
   }
 }
 
@@ -867,4 +1301,3 @@ document.querySelectorAll(".strength-quick-btn").forEach((btn) => {
 
 consumeHistoryApplyMain();
 consumeHistoryPreviewMain();
-

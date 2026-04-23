@@ -6,9 +6,20 @@ function setRunButtonsDisabled(disabled) {
   if (runBtn) runBtn.disabled = disabled;
 }
 const cancelBtn = document.getElementById("cancel-btn");
-const statusText = document.getElementById("status-text");
+const statusText =
+  document.querySelector("#workspace-shell #status-text.sr-only") ||
+  document.getElementById("status-text");
 const progressBar = document.getElementById("progress-bar");
 const resultGallery = document.getElementById("result-gallery");
+const loadingOverlay = document.getElementById("loading-overlay");
+const progressHud = document.getElementById("progress-hud");
+const progressValue = document.getElementById("progress-value");
+const progressPhase = document.getElementById("progress-phase");
+const progressMeter = document.getElementById("progress-meter");
+const generatingOverlay = document.getElementById("generating-overlay");
+const genCanvas = document.getElementById("gen-canvas");
+const genPercent = document.getElementById("gen-percent");
+const genSteps = document.getElementById("gen-steps");
 
 const denoiseInput = document.getElementById("denoise-input");
 const denoiseValue = document.getElementById("denoise-value");
@@ -49,6 +60,10 @@ let queueFiles = [];
 let queueIdx = 0;
 let latestAnalyzeSuggestion = null;
 const finishedJobIds = [];
+let genCtx = null;
+let genFrame = null;
+let genParticles = [];
+let genProgress = 0;
 
 const PHASE_LABELS = {
   pending: "排队",
@@ -61,6 +76,150 @@ const PHASE_LABELS = {
 
 function nextPollMs() {
   return typeof ClientHelpers !== "undefined" && ClientHelpers.pollDelayMs ? ClientHelpers.pollDelayMs() : 700;
+}
+
+function showUiNotice(message, kind = "info") {
+  if (statusText) statusText.textContent = message;
+  const banner = document.getElementById("queue-banner");
+  if (banner) {
+    banner.hidden = false;
+    banner.textContent = message;
+    banner.classList.remove("text-red-300", "text-emerald-300", "text-slate-400");
+    if (kind === "error") banner.classList.add("text-red-300");
+    else if (kind === "success") banner.classList.add("text-emerald-300");
+    else banner.classList.add("text-slate-400");
+  }
+  const placeholder = document.getElementById("result-placeholder");
+  if (placeholder && !currentJobId) {
+    placeholder.textContent = message;
+  }
+  if (progressPhase && kind !== "success") progressPhase.textContent = message;
+}
+
+function setProgressHud(visible, phaseText = "", percent = 0) {
+  if (progressHud) progressHud.classList.toggle("hidden", !visible);
+  const safe = Math.max(0, Math.min(100, Number(percent || 0)));
+  if (progressValue) progressValue.textContent = `${Math.round(safe)}%`;
+  if (progressMeter) progressMeter.style.width = `${safe}%`;
+  if (progressPhase && phaseText) progressPhase.textContent = phaseText;
+}
+
+function ensureGenerationCanvas() {
+  if (!genCanvas || !generatingOverlay) return false;
+  const rect = generatingOverlay.getBoundingClientRect();
+  const w = Math.max(320, Math.round(rect.width));
+  const h = Math.max(320, Math.round(rect.height));
+  if (genCanvas.width !== w || genCanvas.height !== h) {
+    genCanvas.width = w;
+    genCanvas.height = h;
+  }
+  if (!genCtx) genCtx = genCanvas.getContext("2d");
+  return !!genCtx;
+}
+
+function seedGenerationParticles() {
+  if (!ensureGenerationCanvas()) return;
+  const cx = genCanvas.width / 2;
+  const cy = genCanvas.height / 2;
+  genParticles = Array.from({ length: 180 }, () => ({
+    angle: Math.random() * Math.PI * 2,
+    radius: Math.random() * 8,
+    speed: 0.4 + Math.random() * 2.2,
+    size: 1 + Math.random() * 2.6,
+    drift: (Math.random() - 0.5) * 0.02,
+    x: cx,
+    y: cy,
+    life: 0.4 + Math.random() * 0.6,
+  }));
+}
+
+function renderGenerationFrame() {
+  if (!genCtx || !generatingOverlay || generatingOverlay.classList.contains("hidden")) return;
+  const w = genCanvas.width;
+  const h = genCanvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  genCtx.fillStyle = "rgba(2,4,9,0.16)";
+  genCtx.fillRect(0, 0, w, h);
+
+  const waveRadius = 30 + genProgress * Math.min(w, h) * 0.42;
+  for (let i = 0; i < 3; i++) {
+    const r = waveRadius - i * 36;
+    if (r > 0) {
+      genCtx.beginPath();
+      genCtx.strokeStyle = `rgba(45,91,255,${0.22 - i * 0.05})`;
+      genCtx.lineWidth = 2 - i * 0.3;
+      genCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      genCtx.stroke();
+    }
+  }
+
+  genParticles.forEach((p) => {
+    p.angle += p.drift;
+    p.radius += p.speed * (0.8 + genProgress * 1.8);
+    p.life *= 0.995;
+    if (p.radius > Math.max(w, h) * 0.58 || p.life < 0.12) {
+      p.angle = Math.random() * Math.PI * 2;
+      p.radius = Math.random() * 10;
+      p.speed = 0.4 + Math.random() * 2.2;
+      p.life = 0.4 + Math.random() * 0.6;
+    }
+    p.x = cx + Math.cos(p.angle) * p.radius;
+    p.y = cy + Math.sin(p.angle) * p.radius;
+    const trailX = cx + Math.cos(p.angle) * Math.max(0, p.radius - 18);
+    const trailY = cy + Math.sin(p.angle) * Math.max(0, p.radius - 18);
+    const hue = Math.random() > 0.82 ? "168,85,247" : "45,91,255";
+    genCtx.beginPath();
+    genCtx.strokeStyle = `rgba(${hue},${Math.min(0.7, p.life)})`;
+    genCtx.lineWidth = p.size * 0.7;
+    genCtx.moveTo(trailX, trailY);
+    genCtx.lineTo(p.x, p.y);
+    genCtx.stroke();
+    genCtx.beginPath();
+    genCtx.fillStyle = `rgba(${hue},${Math.min(0.95, p.life + 0.2)})`;
+    genCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    genCtx.fill();
+  });
+
+  const t = performance.now() * 0.0024;
+  const scanA = ((Math.sin(t) * 0.5) + 0.5) * h;
+  const scanB = ((Math.sin(t + 1.8) * 0.5) + 0.5) * h;
+  [scanA, scanB].forEach((scanY, idx) => {
+    genCtx.beginPath();
+    genCtx.strokeStyle = idx === 0 ? "rgba(45,91,255,0.55)" : "rgba(168,85,247,0.32)";
+    genCtx.lineWidth = idx === 0 ? 2 : 1;
+    genCtx.moveTo(0, scanY);
+    genCtx.lineTo(w, scanY);
+    genCtx.stroke();
+  });
+
+  genFrame = requestAnimationFrame(renderGenerationFrame);
+}
+
+function startGenerationVisual() {
+  if (!generatingOverlay) return;
+  generatingOverlay.classList.add("active");
+  ensureGenerationCanvas();
+  seedGenerationParticles();
+  if (genFrame) cancelAnimationFrame(genFrame);
+  genFrame = requestAnimationFrame(renderGenerationFrame);
+}
+
+function updateGenerationVisual(percent) {
+  genProgress = Math.max(0, Math.min(1, Number(percent || 0) / 100));
+  if (genPercent) genPercent.textContent = `${Math.round(percent || 0)}%`;
+  if (genSteps && stepsInput) {
+    const total = Number.parseInt(stepsInput.value || "35", 10) || 35;
+    const done = Math.max(0, Math.min(total, Math.round((percent || 0) / 100 * total)));
+    genSteps.textContent = `Steps: ${done}/${total}`;
+  }
+}
+
+function stopGenerationVisual() {
+  if (genFrame) cancelAnimationFrame(genFrame);
+  genFrame = null;
+  if (generatingOverlay) generatingOverlay.classList.remove("active");
+  if (genCtx && genCanvas) genCtx.clearRect(0, 0, genCanvas.width, genCanvas.height);
 }
 
 function formatPhaseLine(data) {
@@ -81,8 +240,7 @@ function notifyDone(title, body) {
 }
 
 function playCompleteCelebration() {
-  const el =
-    document.querySelector(".sd-output-nested .result-container") || document.querySelector(".result-container");
+  const el = document.getElementById("result-container") || document.querySelector(".result-container");
   if (!el) return;
   el.classList.remove("celebrate-result");
   requestAnimationFrame(() => {
@@ -90,6 +248,11 @@ function playCompleteCelebration() {
     el.classList.add("celebrate-result");
     setTimeout(() => el.classList.remove("celebrate-result"), 2100);
   });
+}
+
+function setProcessingOverlay(active) {
+  if (!loadingOverlay) return;
+  loadingOverlay.classList.toggle("hidden", !active);
 }
 
 function randomizeSdParams() {
@@ -222,9 +385,7 @@ function updateQueueBanner() {
 }
 
 function scrollSdResultIntoView() {
-  const el =
-    document.querySelector(".sd-output-nested .result-container") ||
-    document.querySelector(".result-container");
+  const el = document.getElementById("result-container") || document.querySelector(".result-container");
   if (!el) return;
   try {
     const reduced =
@@ -255,7 +416,7 @@ function recordSdHistoryJob(jobId) {
 
 async function analyzeInputAndSuggest() {
   if (!contentInput || !contentInput.files || contentInput.files.length === 0) {
-    alert("请先选择内容图像");
+    showUiNotice("请先上传内容图，再执行分析或渲染。", "error");
     return;
   }
   const fd = new FormData();
@@ -292,7 +453,7 @@ function applySuggestion() {
 
 async function queueAction(action) {
   if (!currentJobId) {
-    alert("当前无任务");
+    showUiNotice("当前没有可控制的任务。", "error");
     return;
   }
   const resp = await fetch(`/api/jobs/${currentJobId}/${action}`, { method: "POST" });
@@ -302,7 +463,7 @@ async function queueAction(action) {
 
 async function exportBatch(kind) {
   if (!finishedJobIds.length) {
-    alert("暂无已完成任务");
+    showUiNotice("暂无已完成任务，无法导出。", "error");
     return;
   }
   const fd = new FormData();
@@ -316,7 +477,7 @@ async function exportBatch(kind) {
 
 async function exportTransition() {
   if (!currentJobId) {
-    alert("当前无任务");
+    showUiNotice("当前没有可导出的视频任务。", "error");
     return;
   }
   const fd = new FormData();
@@ -329,7 +490,7 @@ async function exportTransition() {
 
 async function buildShare(template) {
   if (!currentJobId) {
-    alert("当前无任务");
+    showUiNotice("当前没有可生成分享素材的任务。", "error");
     return;
   }
   const fd = new FormData();
@@ -844,16 +1005,15 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   const wrap = document.createElement("div");
   wrap.className = "result-item";
   const resultSrc = `/api/result/${jobId}?t=${Date.now()}&index=${imageIndex}`;
-  if (typeof createCompareView === "function" && imageIndex === 0) {
-    wrap.appendChild(createCompareView(jobId, resultSrc));
-  } else {
-    const img = document.createElement("img");
-    img.src = resultSrc;
-    img.alt = altText;
-    img.loading = imageIndex > 0 ? "lazy" : "eager";
-    img.style.display = "block";
-    wrap.appendChild(img);
-  }
+  const img = document.createElement("img");
+  img.src = resultSrc;
+  img.alt = altText;
+  img.loading = imageIndex > 0 ? "lazy" : "eager";
+  img.style.display = "block";
+  img.style.maxHeight = "calc(80vh - 160px)";
+  img.style.boxShadow = "0 24px 70px rgba(0,0,0,0.38)";
+  img.classList.add("fade-in");
+  wrap.appendChild(img);
   const actions = document.createElement("div");
   actions.className = "result-actions";
   const dlResult = document.createElement("a");
@@ -960,6 +1120,9 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
 function showSingleResult(jobId) {
   if (!resultGallery) return;
   clearGallery();
+  setProcessingOverlay(false);
+  setProgressHud(false);
+  stopGenerationVisual();
   const placeholder = document.getElementById("result-placeholder");
   if (placeholder) placeholder.style.display = "none";
   appendResultWithDownload(jobId, 0, "转换结果");
@@ -969,6 +1132,9 @@ function showSingleResult(jobId) {
 function showBatchResults(jobId, count) {
   if (!resultGallery) return;
   clearGallery();
+  setProcessingOverlay(false);
+  setProgressHud(false);
+  stopGenerationVisual();
   const placeholder = document.getElementById("result-placeholder");
   if (placeholder) placeholder.style.display = "none";
   const n = Math.max(0, Number(count || 0));
@@ -1028,7 +1194,7 @@ async function submitQueueSdJob() {
 
 async function startSdStyleTransfer() {
   if (!contentInput || !contentInput.files || contentInput.files.length === 0) {
-    alert("请先选择内容图像");
+    showUiNotice("请先上传内容图，再点击开始执行渲染。", "error");
     return;
   }
 
@@ -1041,6 +1207,7 @@ async function startSdStyleTransfer() {
   queueFiles = Array.from(contentInput.files);
   queueIdx = 0;
   updateQueueBanner();
+  showUiNotice(`准备提交 ${queueFiles.length} 个任务…`);
 
   if (typeof Notification !== "undefined" && Notification.permission === "default") {
     Notification.requestPermission();
@@ -1048,11 +1215,15 @@ async function startSdStyleTransfer() {
 
   setRunButtonsDisabled(true);
   setCancelEnabled(false);
+  setProgressHud(true, "正在提交任务…", 0);
+  startGenerationVisual();
+  updateGenerationVisual(0);
   statusText.textContent = removedTotal > 0
     ? `检测到 ${removedTotal} 个重复提示词，已自动去重，正在提交…`
     : "正在提交 SD 任务到服务器...";
   progressBar.style.width = "0%";
   clearGallery();
+  setProcessingOverlay(true);
   const phRun = document.getElementById("result-placeholder");
   if (phRun) {
     phRun.style.display = "";
@@ -1063,10 +1234,11 @@ async function startSdStyleTransfer() {
     await submitQueueSdJob();
   } catch (e) {
     console.error(e);
-    alert("提交失败: " + e.message);
+    showUiNotice("提交失败：" + e.message, "error");
     queueFiles = [];
     queueIdx = 0;
     updateQueueBanner();
+    setProcessingOverlay(false);
   } finally {
     setRunButtonsDisabled(false);
   }
@@ -1075,13 +1247,15 @@ async function startSdStyleTransfer() {
 async function cancelCurrentJob() {
   if (!currentJobId) return;
   setCancelEnabled(false);
-  statusText.textContent = "取消请求已发送...";
+  showUiNotice("取消请求已发送…");
+  setProcessingOverlay(true);
   try {
     const resp = await fetch(`/api/cancel/${currentJobId}`, { method: "POST" });
     const data = await resp.json();
     if (!resp.ok || data.error) throw new Error(data.error || "取消失败");
   } catch (e) {
     console.error(e);
+    showUiNotice("取消失败：" + (e && e.message ? e.message : "未知错误"), "error");
   }
 }
 
@@ -1101,29 +1275,41 @@ async function pollStatus() {
     const count = data.result_count || 0;
 
     if (status === "queued") {
-      statusText.textContent = formatPhaseLine(data);
+      showUiNotice(formatPhaseLine(data));
+      setProgressHud(true, "任务排队中，等待显卡空闲…", data.progress || 2);
+      updateGenerationVisual(data.progress || 2);
       setCancelEnabled(true);
+      setProcessingOverlay(true);
       pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "pending") {
-      statusText.textContent = formatPhaseLine(data);
+      showUiNotice(formatPhaseLine(data));
+      setProgressHud(true, "正在准备模型和资源…", data.progress || 8);
+      updateGenerationVisual(data.progress || 8);
       setCancelEnabled(false);
+      setProcessingOverlay(true);
       pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "running") {
-      statusText.textContent = formatPhaseLine(data);
+      showUiNotice(formatPhaseLine(data));
+      setProgressHud(true, "正在渲染图像，请稍候…", data.progress || 40);
+      updateGenerationVisual(data.progress || 40);
       setCancelEnabled(true);
+      setProcessingOverlay(true);
       pollingTimer = setTimeout(pollStatus, nextPollMs());
       return;
     }
 
     if (status === "finished") {
-      statusText.textContent = formatPhaseLine({ ...data, phase: "done", phase_detail: "处理完成" });
+      showUiNotice(formatPhaseLine({ ...data, phase: "done", phase_detail: "处理完成" }), "success");
+      setProgressHud(true, "渲染完成，正在整理结果…", 100);
+      updateGenerationVisual(100);
       setCancelEnabled(false);
+      setProcessingOverlay(false);
       const multi = queueFiles.length > 1;
       recordSdHistoryJob(currentJobId);
       if (queueFiles.length > 1 && queueIdx < queueFiles.length - 1) {
@@ -1131,7 +1317,7 @@ async function pollStatus() {
         updateQueueBanner();
         void submitQueueSdJob().catch((e) => {
           console.error(e);
-          statusText.textContent = "队列下一项提交失败: " + e.message;
+          showUiNotice("队列下一项提交失败：" + e.message, "error");
           queueFiles = [];
           queueIdx = 0;
           updateQueueBanner();
@@ -1149,8 +1335,11 @@ async function pollStatus() {
     }
 
     if (status === "cancelled") {
-      statusText.textContent = "任务已取消（已生成的结果保留）";
+      showUiNotice("任务已取消（已生成的结果保留）", "error");
+      setProgressHud(false);
+      stopGenerationVisual();
       setCancelEnabled(false);
+      setProcessingOverlay(false);
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
@@ -1160,8 +1349,11 @@ async function pollStatus() {
     }
 
     if (status === "error") {
-      statusText.textContent = "任务失败: " + (data.error || "未知错误");
+      showUiNotice("任务失败：" + (data.error || "未知错误"), "error");
+      setProgressHud(true, "渲染失败，请调整参数后重试。", data.progress || 0);
+      stopGenerationVisual();
       setCancelEnabled(false);
+      setProcessingOverlay(false);
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
@@ -1171,15 +1363,19 @@ async function pollStatus() {
     pollingTimer = setTimeout(pollStatus, nextPollMs());
   } catch (e) {
     console.error(e);
-    statusText.textContent = "查询状态失败";
+    showUiNotice("查询状态失败", "error");
+    setProgressHud(true, "状态查询失败，请稍后重试。", 0);
+    stopGenerationVisual();
     setCancelEnabled(false);
+    setProcessingOverlay(false);
   }
 }
 
 async function rerunJob(oldJobId) {
-  statusText.textContent = "正在重跑任务...";
+  showUiNotice("正在重跑任务…");
   progressBar.style.width = "0%";
   clearGallery();
+  setProcessingOverlay(true);
   try {
     const resp = await fetch(`/api/rerun/${oldJobId}`, { method: "POST" });
     const data = await resp.json();
@@ -1189,7 +1385,8 @@ async function rerunJob(oldJobId) {
     pollStatus();
   } catch (e) {
     console.error(e);
-    alert("重跑失败: " + e.message);
+    showUiNotice("重跑失败：" + e.message, "error");
+    setProcessingOverlay(false);
   }
 }
 
@@ -1306,4 +1503,3 @@ document.querySelectorAll(".scene-preset-card").forEach((btn) => {
 consumeHistoryApplySd();
 consumeHistoryPreviewSd();
 if (sdStyleSelect) applyStyleRecommendation(sdStyleSelect.value);
-

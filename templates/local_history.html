@@ -36,6 +36,20 @@
             <h2 class="history-list-heading">相册时间轴</h2>
             <span id="history-count" class="history-count-badge" aria-live="polite">—</span>
           </div>
+          <div class="history-filters">
+            <select id="history-filter-mode">
+              <option value="">全部模式</option>
+              <option value="style-transfer">风格迁移</option>
+              <option value="sd">SD 转换</option>
+            </select>
+            <input id="history-filter-q" type="text" placeholder="关键词（风格名 / prompt）" />
+            <input id="history-filter-score-min" type="number" step="0.1" placeholder="最低评分" />
+            <input id="history-filter-score-max" type="number" step="0.1" placeholder="最高评分" />
+            <input id="history-filter-start" type="date" />
+            <input id="history-filter-end" type="date" />
+            <button id="history-filter-apply" type="button" class="secondary-btn">筛选</button>
+            <button id="history-filter-reset" type="button" class="secondary-btn">重置</button>
+          </div>
           <div class="history-view-wrap">
             <div id="history-timeline" class="history-timeline" aria-label="按日期跳转"></div>
             <div id="history-wall" class="history-wall"></div>
@@ -44,7 +58,7 @@
       </main>
 
       <footer class="app-footer history-page-footer">
-        <span>🔒 数据仅存于当前浏览器 · 清空站点数据后会丢失</span>
+        <span>🔒 默认读取 SQLite 历史（若不可用则回退浏览器本地记录）</span>
       </footer>
     </div>
 
