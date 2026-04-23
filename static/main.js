@@ -26,23 +26,23 @@ const strengthValue = document.getElementById("strength-value");
 const modelPicker = document.getElementById("model-picker");
 const processingCtx = processingCanvas ? processingCanvas.getContext("2d") : null;
 
-/** 下载文件名前缀（与 /api/result 的 label 对应） */
+/** 婵炴垶鎸搁鍫澝归崶顒€妫橀柛銉檮椤愪粙鏌涘顒傂㈠褏濮风槐鎾诲焵椤掑嫭鏅柛顐ｇ矌閻?/api/result 闂?label 闁诲海鏁搁幊鎾惰姳閺屻儲鏅?*/
 const PAGE_DOWNLOAD_LABEL = "style-transfer";
 
 let currentJobId = null;
 let pollingTimer = null;
 let processingResizeBound = false;
 
-/** 多图队列（仅当前页内存） */
+/** 婵犮垼鍩栭懝鎯瑰鈧濂告偄瀹勬壆浠氶梺鎸庣☉閻楀懐鍒掓惔銈冧汗闁规儳鍟块·鍛渻閵堝娑ч柛鐐差嚟閳ь剚绋掗敃顐ゆ?*/
 let queueFiles = [];
 let queueIdx = 0;
 
 const PROCESSING_COPY = [
-  { until: 12, text: "奇点已点亮，正在坍缩噪声场。" },
-  { until: 38, text: "蓝色流光开始扩散，图像结构正在浮现。" },
-  { until: 68, text: "波纹穿过画布，细节像墨迹一样晕开。" },
-  { until: 92, text: "神经纹理进入收束阶段，准备定格最终结果。" },
-  { until: 101, text: "终帧曝光中，正在锁定生成结果。" },
+  { until: 12, text: "Singularity lit. Compressing noise field." },
+  { until: 38, text: "Liquid flow is converging. Structure is appearing." },
+  { until: 68, text: "Ripples pass through the canvas. Details are forming." },
+  { until: 92, text: "Neural texture is converging. Final frame is stabilizing." },
+  { until: 101, text: "Final light sweep. Locking the generated result." },
 ];
 
 const processingState = {
@@ -61,12 +61,12 @@ const processingState = {
 };
 
 const PHASE_LABELS = {
-  pending: "排队",
-  downloading: "下载模型",
-  loading_model: "加载模型",
-  running: "推理中",
-  done: "完成",
-  error: "出错",
+  pending: "Queued",
+  downloading: "Downloading model",
+  loading_model: "Loading model",
+  running: "Running",
+  done: "Done",
+  error: "Error",
 };
 
 function nextPollMs() {
@@ -75,11 +75,11 @@ function nextPollMs() {
 
 function formatPhaseLine(data) {
   const code = data.phase || "";
-  const tag = PHASE_LABELS[code] || code || "状态";
+  const tag = PHASE_LABELS[code] || code || "Status";
   const det = (data.phase_detail || "").trim();
   const pct = data.progress != null ? `${data.progress}%` : "";
-  if (det) return `${tag} · ${det}${pct ? ` · ${pct}` : ""}`;
-  return pct ? `${tag} · ${pct}` : tag;
+  if (det) return `${tag} | ${det}${pct ? ` | ${pct}` : ""}`;
+  return pct ? `${tag} | ${pct}` : tag;
 }
 
 function notifyDone(title, body) {
@@ -155,26 +155,14 @@ function resetProcessingParticles() {
   const rect = resultContainer.getBoundingClientRect();
   const width = rect.width || processingCanvas.clientWidth || 0;
   const height = rect.height || processingCanvas.clientHeight || 0;
-  const centerX = width / 2;
-  const centerY = height / 2;
-  const count = Math.max(140, Math.round((width * height) / 3800));
-  processingState.particles = Array.from({ length: count }, () => {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 0.3 + Math.random() * 1.9;
-    return {
-      angle,
-      radius: Math.random() * 8,
-      speed,
-      x: centerX,
-      y: centerY,
-      px: centerX,
-      py: centerY,
-      size: 0.8 + Math.random() * 2.2,
-      hue: Math.random() > 0.18 ? "45,91,255" : "123,92,255",
-      alpha: 0.2 + Math.random() * 0.6,
-      drift: (Math.random() - 0.5) * 0.22,
-    };
-  });
+  const count = Math.max(32, Math.round((width * height) / 26000));
+  processingState.particles = Array.from({ length: count }, () => ({
+    x: Math.random() * width,
+    y: Math.random() * height,
+    size: 18 + Math.random() * 34,
+    speed: 0.35 + Math.random() * 0.8,
+    angle: Math.random() * Math.PI * 2,
+  }));
 }
 
 function spawnProcessingRipple(progress, forced = false) {
@@ -213,7 +201,7 @@ function syncProcessingMeta(progress, data = {}) {
 
   if (processingModel) {
     const sampler = data.sampler || data.phase_detail || "DPM++ 2M Karras";
-    processingModel.textContent = `Sampler · ${String(sampler).slice(0, 42)}`;
+    processingModel.textContent = `Sampler 閻?${String(sampler).slice(0, 42)}`;
   }
 }
 
@@ -252,12 +240,12 @@ function drawProcessingHud(width, progress) {
   processingCtx.font = "600 28px 'JetBrains Mono', monospace";
   processingCtx.textAlign = "right";
   processingCtx.textBaseline = "top";
-  processingCtx.shadowBlur = 26;
-  processingCtx.shadowColor = "rgba(45, 91, 255, 0.42)";
-  processingCtx.fillStyle = "rgba(219, 230, 255, 0.96)";
+  processingCtx.shadowBlur = 16;
+  processingCtx.shadowColor = "rgba(139, 92, 246, 0.18)";
+  processingCtx.fillStyle = "#475569";
   processingCtx.fillText(`${String(Math.round(progress)).padStart(2, "0")}%`, width - 28, 24);
   processingCtx.font = "500 10px 'JetBrains Mono', monospace";
-  processingCtx.fillStyle = "rgba(115, 152, 255, 0.72)";
+  processingCtx.fillStyle = "rgba(100, 116, 139, 0.82)";
   processingCtx.fillText("GENERATION PROGRESS", width - 28, 58);
   processingCtx.restore();
 }
@@ -269,120 +257,39 @@ function animateProcessingFrame(ts) {
   const height = rect?.height || processingCanvas.clientHeight;
   const cx = width / 2;
   const cy = height / 2;
-  const delta = processingState.lastTs ? Math.min((ts - processingState.lastTs) / 16.67, 2.2) : 1;
-  processingState.lastTs = ts;
+  const centerPull = processingState.progress / 100;
 
   processingCtx.clearRect(0, 0, width, height);
-  processingCtx.fillStyle = "rgba(1, 4, 14, 0.22)";
+  processingCtx.fillStyle = "rgba(255,255,255,0.08)";
   processingCtx.fillRect(0, 0, width, height);
 
-  if (processingState.progress - processingState.lastRippleProgress >= 12) {
-    processingState.lastRippleProgress = processingState.progress;
-    spawnProcessingRipple(processingState.progress);
-  }
-
-  processingState.ripples = processingState.ripples
-    .map((ripple) => ({
-      ...ripple,
-      radius: ripple.radius + ripple.speed * delta,
-      alpha: ripple.alpha * 0.992,
-    }))
-    .filter((ripple) => ripple.radius < ripple.maxRadius && ripple.alpha > 0.04);
-
-  drawProcessingPreview(width, height, cx, cy, processingState.progress);
-
-  processingState.ripples.forEach((ripple, index) => {
-    const gradient = processingCtx.createRadialGradient(cx, cy, Math.max(0, ripple.radius - ripple.width * 0.6), cx, cy, ripple.radius + ripple.width);
-    gradient.addColorStop(0, "rgba(45, 91, 255, 0)");
-    gradient.addColorStop(0.45, `rgba(45, 91, 255, ${0.08 * ripple.alpha})`);
-    gradient.addColorStop(0.72, `rgba(103, 179, 255, ${0.32 * ripple.alpha})`);
-    gradient.addColorStop(1, "rgba(45, 91, 255, 0)");
-    processingCtx.save();
-    processingCtx.strokeStyle = index % 2 === 0 ? gradient : `rgba(129, 110, 255, ${0.18 * ripple.alpha})`;
-    processingCtx.lineWidth = ripple.width;
-    processingCtx.beginPath();
-    processingCtx.arc(cx, cy, ripple.radius, 0, Math.PI * 2);
-    processingCtx.stroke();
-    processingCtx.restore();
-  });
+  processingCtx.save();
+  processingCtx.filter = "blur(18px) contrast(28)";
 
   processingState.particles.forEach((particle) => {
-    particle.px = particle.x;
-    particle.py = particle.y;
-    particle.radius += particle.speed * delta * (0.7 + processingState.progress / 120);
-    particle.angle += particle.drift * delta;
-    particle.x = cx + Math.cos(particle.angle) * particle.radius;
-    particle.y = cy + Math.sin(particle.angle) * particle.radius * 0.72;
-    if (
-      particle.x < -40 ||
-      particle.x > width + 40 ||
-      particle.y < -40 ||
-      particle.y > height + 40
-    ) {
-      particle.radius = Math.random() * 12;
-      particle.angle = Math.random() * Math.PI * 2;
-      particle.x = cx;
-      particle.y = cy;
-      particle.px = cx;
-      particle.py = cy;
+    particle.y -= particle.speed * 0.4;
+    particle.x += Math.sin(ts / 1000 + particle.angle) * 0.7;
+    particle.x += (cx - particle.x) * centerPull * 0.02;
+    particle.y += (cy - particle.y) * centerPull * 0.02;
+    if (particle.y < -50) {
+      particle.y = height + 50;
+      particle.x = Math.random() * width;
     }
+    if (particle.x < -60) particle.x = width + 60;
+    if (particle.x > width + 60) particle.x = -60;
 
-    processingCtx.save();
-    processingCtx.strokeStyle = `rgba(${particle.hue}, ${0.14 + particle.alpha * 0.16})`;
-    processingCtx.lineWidth = particle.size * 0.9;
+    processingCtx.fillStyle = "#10B981";
     processingCtx.beginPath();
-    processingCtx.moveTo(particle.px, particle.py);
-    processingCtx.lineTo(particle.x, particle.y);
-    processingCtx.stroke();
-
-    processingCtx.fillStyle = `rgba(${particle.hue}, ${0.32 + particle.alpha * 0.58})`;
-    processingCtx.shadowBlur = 16;
-    processingCtx.shadowColor = `rgba(${particle.hue}, 0.4)`;
-    processingCtx.beginPath();
-    processingCtx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+    processingCtx.arc(particle.x, particle.y, particle.size * (1 + centerPull), 0, Math.PI * 2);
     processingCtx.fill();
-    processingCtx.restore();
   });
 
-  const scanOffset = (ts - processingState.startTime) * 0.14;
-  [0, height * 0.33].forEach((offset, idx) => {
-    const y = ((scanOffset + offset) % (height + 180)) - 90;
-    const line = processingCtx.createLinearGradient(0, y, 0, y + 32);
-    line.addColorStop(0, "rgba(45, 91, 255, 0)");
-    line.addColorStop(0.45, idx === 0 ? "rgba(118, 171, 255, 0.12)" : "rgba(155, 132, 255, 0.10)");
-    line.addColorStop(0.55, idx === 0 ? "rgba(147, 209, 255, 0.36)" : "rgba(165, 133, 255, 0.26)");
-    line.addColorStop(1, "rgba(45, 91, 255, 0)");
-    processingCtx.fillStyle = line;
-    processingCtx.fillRect(0, y, width, 34);
-  });
-
-  const coreGlow = processingCtx.createRadialGradient(cx, cy, 2, cx, cy, 88 + processingState.progress * 0.4);
-  coreGlow.addColorStop(0, "rgba(255,255,255,0.98)");
-  coreGlow.addColorStop(0.08, "rgba(121, 168, 255, 0.95)");
-  coreGlow.addColorStop(0.18, "rgba(45, 91, 255, 0.45)");
-  coreGlow.addColorStop(1, "rgba(45, 91, 255, 0)");
-  processingCtx.fillStyle = coreGlow;
+  const coreSize = 40 + processingState.progress * 0.8;
+  processingCtx.fillStyle = "#10B981";
   processingCtx.beginPath();
-  processingCtx.arc(cx, cy, 88 + processingState.progress * 0.4, 0, Math.PI * 2);
+  processingCtx.arc(cx, cy, coreSize, 0, Math.PI * 2);
   processingCtx.fill();
-
-  processingCtx.fillStyle = "rgba(255,255,255,0.98)";
-  processingCtx.beginPath();
-  processingCtx.arc(cx, cy, 2 + Math.sin(ts * 0.016) * 0.6, 0, Math.PI * 2);
-  processingCtx.fill();
-
-  if (processingState.flashUntil > ts) {
-    const flashProgress = 1 - (processingState.flashUntil - ts) / 520;
-    const sweepX = -width * 0.2 + flashProgress * width * 1.4;
-    const sweep = processingCtx.createLinearGradient(sweepX - 140, 0, sweepX + 140, 0);
-    sweep.addColorStop(0, "rgba(255,255,255,0)");
-    sweep.addColorStop(0.5, "rgba(180, 212, 255, 0.55)");
-    sweep.addColorStop(1, "rgba(255,255,255,0)");
-    processingCtx.fillStyle = sweep;
-    processingCtx.fillRect(0, 0, width, height);
-    processingCtx.fillStyle = `rgba(210, 230, 255, ${0.2 * (1 - flashProgress)})`;
-    processingCtx.fillRect(0, 0, width, height);
-  }
+  processingCtx.restore();
 
   drawProcessingHud(width, processingState.progress);
   processingState.frameId = requestAnimationFrame(animateProcessingFrame);
@@ -458,7 +365,7 @@ function revealProcessingOverlay() {
     if (revealed) return;
     revealed = true;
     processingState.progress = 100;
-    syncProcessingMeta(100, { progress: 100, phase_detail: "处理完成" });
+    syncProcessingMeta(100, { progress: 100, phase_detail: "Completed" });
     processingState.flashUntil = performance.now() + 520;
     loadingOverlay.classList.add("revealing");
     window.setTimeout(() => {
@@ -510,15 +417,15 @@ async function copyStyleRecipe() {
     await navigator.clipboard.writeText(text);
     if (statusText) {
       const prev = statusText.textContent;
-      statusText.textContent = "📋 配方已复制到剪贴板";
+      statusText.textContent = "Recipe copied to clipboard";
       setTimeout(() => {
-        if (statusText.textContent === "📋 配方已复制到剪贴板") statusText.textContent = prev;
+        if (statusText.textContent === "Recipe copied to clipboard") statusText.textContent = prev;
       }, 2200);
     } else {
-      alert("已复制到剪贴板");
+      alert("Copied to clipboard");
     }
   } catch (_) {
-    window.prompt("请手动复制：", text);
+    window.prompt("Copy manually:", text);
   }
 }
 
@@ -527,7 +434,7 @@ async function pasteStyleRecipe() {
   try {
     text = await navigator.clipboard.readText();
   } catch (_) {
-    text = window.prompt("请粘贴配方 JSON：") || "";
+    text = window.prompt("Paste recipe JSON:") || "";
   }
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -535,18 +442,18 @@ async function pasteStyleRecipe() {
   try {
     obj = JSON.parse(trimmed);
   } catch (_) {
-    alert("不是有效的 JSON");
+    alert("Invalid JSON");
     return;
   }
   if (obj.page && obj.page !== "style-transfer") {
-    alert("这是其它页面的配方，请在 SD 页使用「粘贴配方」");
+    alert("This recipe belongs to another page. Use paste recipe on the SD page.");
     return;
   }
   const key = obj.model || obj.modelName;
   if (key && modelSelect) {
     const found = Array.from(modelSelect.options).some((o) => o.value === key);
     if (!found) {
-      alert("当前列表中不存在该模型：" + key);
+      alert("Model not found in the current list: " + key);
       return;
     }
     modelSelect.value = key;
@@ -563,7 +470,7 @@ async function pasteStyleRecipe() {
       syncStrengthUI();
     }
   }
-  if (statusText) statusText.textContent = "已应用粘贴的配方";
+  if (statusText) statusText.textContent = "Recipe applied";
 }
 
 function updateQueueBanner() {
@@ -574,7 +481,7 @@ function updateQueueBanner() {
     return;
   }
   el.hidden = false;
-  el.textContent = `队列：第 ${queueIdx + 1} / ${queueFiles.length} 张`;
+  el.textContent = `Queue: ${queueIdx + 1} / ${queueFiles.length}`;
 }
 
 function recordStyleHistoryJob(jobId) {
@@ -634,7 +541,7 @@ function setPreviewMulti(input, container) {
   container.innerHTML = "";
   const files = input.files ? Array.from(input.files) : [];
   if (!files.length) {
-    container.textContent = "暂无预览";
+    container.textContent = "No preview";
     return;
   }
 
@@ -645,7 +552,7 @@ function setPreviewMulti(input, container) {
 
   if (files.length > 1) {
     const count = document.createElement("div");
-    count.textContent = `共 ${files.length} 张`;
+    count.textContent = `${files.length} files`;
     container.appendChild(count);
   }
 }
@@ -654,7 +561,7 @@ function setPreviewSingle(input, container) {
   container.innerHTML = "";
   const file = input.files ? input.files[0] : null;
   if (!file) {
-    container.textContent = "暂无预览";
+    container.textContent = "No preview";
     return;
   }
   const img = document.createElement("img");
@@ -671,9 +578,14 @@ if (styleInput) {
 
 function clearGallery() {
   if (resultGallery) resultGallery.innerHTML = "";
+  if (resultImage) {
+    resultImage.classList.remove("fade-in", "active");
+    resultImage.classList.add("hidden");
+    resultImage.src = "";
+  }
 }
 
-// ============ 二维码弹窗（扫码下载）===========
+// ============ 婵炲瓨绮岄惉鐓幥庨鈧幆宥嗘媴濮濆苯澧剧紓浣瑰姈椤ㄦ劗妲愬▎鎾崇妞ゆ劑鍊楅崹鍐测槈閹炬剚鍎撴繛鏉戞喘閺?==========
 let qrModalSeq = 0;
 let qrModalLastObjUrl = null;
 
@@ -687,7 +599,7 @@ function toAbsUrl(maybeRelativeUrl) {
 
 async function fetchQrObjectUrl(text) {
   try {
-    // 复用项目里已有的外部 QR 生成服务（参数卡也用它）。
+    // 婵犮垼娉涚粔鍫曞极閵堝棎浜滈柛锔诲幗缁愭姊洪幓鎺曞闁告埊绻濆鍨緞鐏炲墽鏆犳繝銏ｅ煐閻楃娀宕?QR 闂佹眹鍨婚崰鎰板垂濮樿泛瀚夌€广儱鎳庨～銈夋煥濞戞澧曠€殿噮鍓熷顐﹀级閸喖鑰挎繛鎴炴⒒閸犳捇寮妶鍥ｅ亾閻熸澘鏋︾紒杈ㄥ哺婵?
     const u = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=1&data=${encodeURIComponent(
       String(text || "")
     )}`;
@@ -738,7 +650,7 @@ function ensureQrModalEl() {
 
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
-  closeBtn.textContent = "关闭";
+  closeBtn.textContent = "Close";
   closeBtn.className = "secondary-btn";
   closeBtn.style.flex = "0 0 auto";
   closeBtn.addEventListener("click", () => hideQrModal());
@@ -754,7 +666,7 @@ function ensureQrModalEl() {
 
   const img = document.createElement("img");
   img.id = "qr-modal-img";
-  img.alt = "二维码";
+  img.alt = "QR code";
   img.style.display = "block";
   img.style.margin = "14px auto 10px";
   img.style.width = "252px";
@@ -774,7 +686,7 @@ function ensureQrModalEl() {
   link.href = "#";
   link.target = "_blank";
   link.rel = "noreferrer";
-  linkWrap.textContent = "下载链接：";
+  linkWrap.textContent = "Download link: ";
   linkWrap.appendChild(link);
 
   const hint = document.createElement("div");
@@ -782,7 +694,7 @@ function ensureQrModalEl() {
   hint.style.opacity = "0.86";
   hint.style.fontSize = "12.8px";
   hint.style.lineHeight = "1.45";
-  hint.textContent = "说明：二维码指向“下载接口”。手机扫码后会直接触发下载（可能需要浏览器权限）。";
+  hint.textContent = "The QR code points to the download endpoint for the generated result.";
 
   const actions = document.createElement("div");
   actions.style.display = "flex";
@@ -794,16 +706,16 @@ function ensureQrModalEl() {
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.className = "secondary-btn";
-  copyBtn.textContent = "复制下载链接";
+  copyBtn.textContent = "Copy download link";
   copyBtn.addEventListener("click", async () => {
     const href = link.href;
     if (!href || href === "#") return;
     try {
       await navigator.clipboard.writeText(href);
-      copyBtn.textContent = "已复制";
-      setTimeout(() => (copyBtn.textContent = "复制下载链接"), 1600);
+      copyBtn.textContent = "Copied";
+      setTimeout(() => (copyBtn.textContent = "Copy download link"), 1600);
     } catch (_) {
-      window.prompt("请手动复制链接：", href);
+      window.prompt("Copy link manually:", href);
     }
   });
 
@@ -838,7 +750,7 @@ async function showQrModalForDownload(titleText, downloadHref) {
   const overlay = ensureQrModalEl();
   if (!overlay) return;
 
-  // 每次展示递增序号，避免“快速连点”导致旧请求覆盖新二维码。
+  // 濠殿噯绲界换鎴︻敃閼测晙娌柡鍥╁О娴犳盯姊洪锝呯瑨妞ゃ倕鍟幆鏃囩疀閹惧啿鈻忛梺鎸庣☉閻倹瀵奸埡鍛鐎广儰璁查崑鎾愁煥閸愨晛娓愰梻渚囧亞閸犳洜鎹㈠☉銏″€烽柛蹇擃槴閸嬫挸鈹戦崱鈺佹闂佺厧鍢查悺銊ノ涢銈嗗珰闂佸灝顑囧﹢鎾偡閺囩偞顥犳繛鎻掞躬瀵剚锛愭担铏规缂傚倷绀侀顓㈡偉濠婂牆违?
   const seq = ++qrModalSeq;
 
   const title = overlay.querySelector(".qr-modal-title");
@@ -848,8 +760,8 @@ async function showQrModalForDownload(titleText, downloadHref) {
 
   const absDownloadUrl = toAbsUrl(downloadHref);
 
-  if (title) title.textContent = String(titleText || "二维码");
-  if (status) status.textContent = "正在生成二维码…";
+  if (title) title.textContent = String(titleText || "QR code");
+  if (status) status.textContent = "Generating QR code...";
   if (link) link.href = absDownloadUrl;
   if (link) link.textContent = absDownloadUrl;
   if (img) img.src = "";
@@ -864,9 +776,9 @@ async function showQrModalForDownload(titleText, downloadHref) {
 
   if (objUrl && img) {
     img.src = objUrl;
-    if (status) status.textContent = "二维码已就绪，请使用手机扫码下载";
+    if (status) status.textContent = "QR code ready. Scan to download.";
   } else {
-    if (status) status.textContent = "二维码生成失败（可能是网络不可用）。请手动打开下载链接。";
+    if (status) status.textContent = "Failed to generate QR code. Open the link directly.";
   }
 }
 
@@ -885,40 +797,40 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   const wrap = document.createElement("div");
   wrap.className = "result-item";
   const resultSrc = `/api/result/${jobId}?t=${Date.now()}&index=${imageIndex}`;
-  if (typeof createCompareView === "function" && imageIndex === 0) {
-    wrap.appendChild(createCompareView(jobId, resultSrc));
+
+  if (imageIndex === 0 && resultImage) {
+    resultImage.src = resultSrc;
+    resultImage.alt = altText;
+    resultImage.classList.remove("hidden", "is-generating", "fade-in", "active");
+    void resultImage.offsetWidth;
+    resultImage.classList.add("fade-in", "active");
   } else {
     const img = document.createElement("img");
     img.src = resultSrc;
     img.alt = altText;
     img.loading = imageIndex > 0 ? "lazy" : "eager";
     img.style.display = "block";
-    img.classList.add("fade-in");
+    img.classList.add("fade-in", "active");
     wrap.appendChild(img);
   }
-  if (imageIndex === 0 && resultImage) {
-    resultImage.src = resultSrc;
-    resultImage.classList.remove("hidden");
-    resultImage.classList.add("fade-in");
-  }
+
   const actions = document.createElement("div");
   actions.className = "result-actions";
+
   const dlResult = document.createElement("a");
   dlResult.href = downloadUrlForJob(jobId, imageIndex, PAGE_DOWNLOAD_LABEL);
   dlResult.className = "secondary-btn download-link";
-  dlResult.title = "仅包含迁移后的结果图";
-  dlResult.textContent =
-    imageIndex > 0 ? `仅下载第 ${imageIndex + 1} 张结果` : "仅下载结果图";
+  dlResult.title = "仅下载结果图";
+  dlResult.textContent = imageIndex > 0 ? `下载结果 ${imageIndex + 1}` : "下载结果图";
   actions.appendChild(dlResult);
 
   const qrResultBtn = document.createElement("button");
   qrResultBtn.type = "button";
   qrResultBtn.className = "secondary-btn";
   qrResultBtn.textContent = "结果二维码";
-  qrResultBtn.title = "生成结果图下载二维码（手机扫码即可下载）";
-  const resultDownloadHref = dlResult.href;
+  qrResultBtn.title = "生成结果图下载二维码";
   qrResultBtn.addEventListener("click", async () => {
-    await showQrModalForDownload("结果图二维码", resultDownloadHref);
+    await showQrModalForDownload("结果图二维码", dlResult.href);
   });
   actions.appendChild(qrResultBtn);
 
@@ -926,7 +838,7 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   copyLinkBtn.type = "button";
   copyLinkBtn.className = "secondary-btn";
   copyLinkBtn.textContent = "复制图片链接";
-  copyLinkBtn.title = "复制该结果图的完整 URL";
+  copyLinkBtn.title = "复制结果图的完整链接";
   copyLinkBtn.addEventListener("click", async () => {
     const abs = new URL(resultSrc, window.location.origin).href;
     try {
@@ -941,44 +853,20 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   });
   actions.appendChild(copyLinkBtn);
 
-  if (imageIndex === 0) {
-    const dlCompare = document.createElement("a");
-    const cmpUrl =
-      typeof downloadCompareUrlForJob === "function"
-        ? downloadCompareUrlForJob(jobId, PAGE_DOWNLOAD_LABEL)
-        : `/api/compare-download/${encodeURIComponent(String(jobId))}?${new URLSearchParams({
-            t: String(Date.now()),
-            download: "1",
-            label: String(PAGE_DOWNLOAD_LABEL || "compare"),
-          }).toString()}`;
-    dlCompare.href = cmpUrl;
-    dlCompare.className = "secondary-btn secondary-btn-primary download-link";
-    dlCompare.title = "原图与结果左右并排一张图";
-    dlCompare.textContent = "下载对比图";
-    actions.appendChild(dlCompare);
-
-    const qrCompareBtn = document.createElement("button");
-    qrCompareBtn.type = "button";
-    qrCompareBtn.className = "secondary-btn";
-    qrCompareBtn.textContent = "对比二维码";
-    qrCompareBtn.title = "生成对比图下载二维码（手机扫码即可下载）";
-    const compareDownloadHref = dlCompare.href;
-    qrCompareBtn.addEventListener("click", async () => {
-      await showQrModalForDownload("对比图二维码", compareDownloadHref);
-    });
-    actions.appendChild(qrCompareBtn);
+  if (imageIndex === 0 && resultImage) {
+    resultGallery.appendChild(actions);
+    return;
   }
 
   wrap.appendChild(actions);
   resultGallery.appendChild(wrap);
 }
-
 function showSingleResult(jobId) {
   if (!resultGallery) return;
   clearGallery();
   const placeholder = document.getElementById("result-placeholder");
   if (placeholder) placeholder.style.display = "none";
-  appendResultWithDownload(jobId, 0, "迁移结果");
+  appendResultWithDownload(jobId, 0, "Transfer result");
 }
 
 function showBatchResults(jobId, count) {
@@ -988,7 +876,7 @@ function showBatchResults(jobId, count) {
   if (placeholder) placeholder.style.display = "none";
   const n = Math.max(0, Number(count || 0));
   for (let i = 0; i < n; i++) {
-    appendResultWithDownload(jobId, i, `迁移结果 ${i + 1}`);
+    appendResultWithDownload(jobId, i, `Transfer result ${i + 1}`);
   }
 }
 
@@ -1007,7 +895,7 @@ async function submitQueueStyleJob() {
   if (useDown) {
     if (statusText) {
       statusText.textContent =
-        queueFiles.length > 1 ? `压缩第 ${queueIdx + 1}/${queueFiles.length} 张…` : "正在压缩大图…";
+        queueFiles.length > 1 ? `Compressing ${queueIdx + 1}/${queueFiles.length}...` : "Compressing image...";
     }
     contentFile = await ClientHelpers.downscaleImageFile(file, maxEdge);
   }
@@ -1028,23 +916,23 @@ async function submitQueueStyleJob() {
   const resp = await fetch("/api/style-transfer", { method: "POST", body: formData });
   const data = await resp.json();
   if (!resp.ok || data.error) {
-    throw new Error(data.error || "任务创建失败");
+    throw new Error(data.error || "Failed to create job");
   }
   currentJobId = data.job_id;
   statusText.textContent =
     queueFiles.length > 1
-      ? `已提交队列 ${queueIdx + 1}/${queueFiles.length}，等待处理…`
-      : "任务已创建，开始处理…";
+      ? `Queued ${queueIdx + 1}/${queueFiles.length}. Waiting...`
+      : "Job created. Processing...";
   pollStatus();
 }
 
 async function startStyleTransfer() {
   if (!contentInput || !contentInput.files || contentInput.files.length === 0) {
-    alert("请先选择内容图像");
+    alert("Please select a content image first");
     return;
   }
   if (modelSelect.value === "vgg19_neural_style" && (!styleInput || !styleInput.files || styleInput.files.length === 0)) {
-    alert("VGG19 经典风格迁移需要上传风格图（style_image）");
+    alert("VGG19 classic style transfer requires a style image.");
     return;
   }
 
@@ -1059,7 +947,7 @@ async function startStyleTransfer() {
 
   setRunButtonsDisabled(true);
   if (cancelBtn) setCancelEnabled(false);
-  statusText.textContent = "正在提交任务到服务器...";
+  statusText.textContent = "Submitting job to server...";
   progressBar.style.width = "0%";
   clearGallery();
   trigerWarp.start({ progress: 0, sampler: "DPM++ 2M Karras" });
@@ -1073,7 +961,7 @@ async function startStyleTransfer() {
     await submitQueueStyleJob();
   } catch (e) {
     console.error(e);
-    alert("提交失败: " + e.message);
+    alert("Submit failed: " + e.message);
     queueFiles = [];
     queueIdx = 0;
     updateQueueBanner();
@@ -1086,12 +974,12 @@ async function startStyleTransfer() {
 async function cancelCurrentJob() {
   if (!currentJobId) return;
   setCancelEnabled(false);
-  statusText.textContent = "取消请求已发送...";
+  statusText.textContent = "Cancel request sent...";
   trigerWarp.update(processingState.progress, {});
   try {
     const resp = await fetch(`/api/cancel/${currentJobId}`, { method: "POST" });
     const data = await resp.json();
-    if (!resp.ok || data.error) throw new Error(data.error || "取消失败");
+    if (!resp.ok || data.error) throw new Error(data.error || "Cancel failed");
   } catch (e) {
     console.error(e);
   }
@@ -1105,7 +993,7 @@ async function pollStatus() {
     const resp = await fetch(`/api/status/${currentJobId}`);
     const data = await resp.json();
     if (!resp.ok || data.error) {
-      throw new Error(data.error || "状态查询失败");
+      throw new Error(data.error || "Status query failed");
     }
 
     progressBar.style.width = `${data.progress || 0}%`;
@@ -1139,7 +1027,7 @@ async function pollStatus() {
     }
 
     if (status === "finished") {
-      statusText.textContent = formatPhaseLine({ ...data, phase: "done", phase_detail: "处理完成" });
+      statusText.textContent = formatPhaseLine({ ...data, phase: "done", phase_detail: "Completed" });
       setCancelEnabled(false);
       const multi = queueFiles.length > 1;
       recordStyleHistoryJob(currentJobId);
@@ -1148,14 +1036,14 @@ async function pollStatus() {
         updateQueueBanner();
         void submitQueueStyleJob().catch((e) => {
           console.error(e);
-          statusText.textContent = "队列下一项提交失败: " + e.message;
+          statusText.textContent = "Next queued item failed: " + e.message;
           queueFiles = [];
           queueIdx = 0;
           updateQueueBanner();
         });
         return;
       }
-      if (multi) notifyDone("风格迁移", "队列已全部完成");
+      if (multi) notifyDone("Style transfer", "Queue completed");
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
@@ -1167,7 +1055,7 @@ async function pollStatus() {
     }
 
     if (status === "cancelled") {
-      statusText.textContent = "任务已取消（已生成的结果保留）";
+      statusText.textContent = "Task cancelled. Existing results are preserved.";
       setCancelEnabled(false);
       trigerWarp.stop();
       queueFiles = [];
@@ -1179,7 +1067,7 @@ async function pollStatus() {
     }
 
     if (status === "error") {
-      statusText.textContent = "任务失败: " + (data.error || "未知错误");
+      statusText.textContent = "Task failed: " + (data.error || "Unknown error");
       setCancelEnabled(false);
       trigerWarp.stop();
       queueFiles = [];
@@ -1188,31 +1076,31 @@ async function pollStatus() {
       return;
     }
 
-    // 兜底
+    // 闂佺绻戠划宀€鑺?
     pollingTimer = setTimeout(pollStatus, nextPollMs());
   } catch (e) {
     console.error(e);
-    statusText.textContent = "查询状态失败";
+    statusText.textContent = "Status query failed";
     setCancelEnabled(false);
     trigerWarp.stop();
   }
 }
 
 async function rerunJob(oldJobId) {
-  statusText.textContent = "正在重跑任务...";
+  statusText.textContent = "Re-running job...";
   progressBar.style.width = "0%";
   clearGallery();
   trigerWarp.start({ progress: 0, sampler: "DPM++ 2M Karras" });
   try {
     const resp = await fetch(`/api/rerun/${oldJobId}`, { method: "POST" });
     const data = await resp.json();
-    if (!resp.ok || data.error) throw new Error(data.error || "重跑失败");
+    if (!resp.ok || data.error) throw new Error(data.error || "Rerun failed");
     currentJobId = data.job_id;
     setCancelEnabled(false);
     pollStatus();
   } catch (e) {
     console.error(e);
-    alert("重跑失败: " + e.message);
+    alert("Rerun failed: " + e.message);
     trigerWarp.stop();
   }
 }

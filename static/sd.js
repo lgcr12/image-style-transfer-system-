@@ -3,7 +3,10 @@ const contentPreview = document.getElementById("content-preview");
 const runBtn = document.getElementById("run-btn");
 
 function setRunButtonsDisabled(disabled) {
-  if (runBtn) runBtn.disabled = disabled;
+  if (runBtn) {
+    runBtn.disabled = disabled;
+    runBtn.classList.toggle("is-loading", disabled);
+  }
 }
 const cancelBtn = document.getElementById("cancel-btn");
 const statusText =
@@ -119,75 +122,137 @@ function ensureGenerationCanvas() {
 
 function seedGenerationParticles() {
   if (!ensureGenerationCanvas()) return;
-  const cx = genCanvas.width / 2;
-  const cy = genCanvas.height / 2;
-  genParticles = Array.from({ length: 180 }, () => ({
+  const w = genCanvas.width;
+  const h = genCanvas.height;
+  genParticles = Array.from({ length: 140 }, () => ({
     angle: Math.random() * Math.PI * 2,
-    radius: Math.random() * 8,
-    speed: 0.4 + Math.random() * 2.2,
-    size: 1 + Math.random() * 2.6,
-    drift: (Math.random() - 0.5) * 0.02,
-    x: cx,
-    y: cy,
-    life: 0.4 + Math.random() * 0.6,
+    radius: 8 + Math.random() * Math.min(w, h) * 0.06,
+    speed: 0.4 + Math.random() * 1.5,
+    size: 0.8 + Math.random() * 1.2,
+    life: 0.45 + Math.random() * 0.55,
+    spin: (Math.random() - 0.5) * 0.08,
+    twinkle: Math.random() * Math.PI * 2,
+    orbit: 0.14 + Math.random() * 0.6,
   }));
 }
 
-function renderGenerationFrame() {
+function drawAnimeStar(ctx, x, y, size, rotation, hue, alpha) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const outer = (-Math.PI / 2) + (i * Math.PI * 2) / 5;
+    const inner = outer + Math.PI / 5;
+    ctx.lineTo(Math.cos(outer) * size, Math.sin(outer) * size);
+    ctx.lineTo(Math.cos(inner) * (size * 0.42), Math.sin(inner) * (size * 0.42));
+  }
+  ctx.closePath();
+  ctx.fillStyle = `hsla(${hue}, 100%, 80%, ${alpha})`;
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderGenerationFrame(ts = performance.now()) {
   if (!genCtx || !generatingOverlay || generatingOverlay.classList.contains("hidden")) return;
   const w = genCanvas.width;
   const h = genCanvas.height;
   const cx = w / 2;
   const cy = h / 2;
-  genCtx.fillStyle = "rgba(2,4,9,0.16)";
-  genCtx.fillRect(0, 0, w, h);
+  const hue = 320 - (genProgress * 140);
+  const pulse = Math.sin(ts * 0.0024) * 0.5 + 0.5;
 
-  const waveRadius = 30 + genProgress * Math.min(w, h) * 0.42;
-  for (let i = 0; i < 3; i++) {
-    const r = waveRadius - i * 36;
+  genCtx.clearRect(0, 0, w, h);
+  genCtx.fillStyle = "rgba(244,240,255,0.1)";
+  genCtx.fillRect(0, 0, w, h);
+  genCtx.strokeStyle = "rgba(255,106,213,0.06)";
+  genCtx.lineWidth = 1;
+  for (let gx = 0; gx < w; gx += 40) {
+    genCtx.beginPath();
+    genCtx.moveTo(gx, 0);
+    genCtx.lineTo(gx, h);
+    genCtx.stroke();
+  }
+  for (let gy = 0; gy < h; gy += 40) {
+    genCtx.beginPath();
+    genCtx.moveTo(0, gy);
+    genCtx.lineTo(w, gy);
+    genCtx.stroke();
+  }
+
+  const waveRadius = 28 + genProgress * Math.min(w, h) * 0.4;
+  for (let i = 0; i < 4; i++) {
+    const r = waveRadius - i * 28;
     if (r > 0) {
       genCtx.beginPath();
-      genCtx.strokeStyle = `rgba(45,91,255,${0.22 - i * 0.05})`;
-      genCtx.lineWidth = 2 - i * 0.3;
+      genCtx.strokeStyle = `hsla(${hue - i * 12}, 100%, 72%, ${0.18 - i * 0.03})`;
+      genCtx.lineWidth = 1.8 - i * 0.2;
       genCtx.arc(cx, cy, r, 0, Math.PI * 2);
       genCtx.stroke();
     }
   }
 
-  genParticles.forEach((p) => {
-    p.angle += p.drift;
-    p.radius += p.speed * (0.8 + genProgress * 1.8);
-    p.life *= 0.995;
-    if (p.radius > Math.max(w, h) * 0.58 || p.life < 0.12) {
-      p.angle = Math.random() * Math.PI * 2;
-      p.radius = Math.random() * 10;
-      p.speed = 0.4 + Math.random() * 2.2;
-      p.life = 0.4 + Math.random() * 0.6;
-    }
-    p.x = cx + Math.cos(p.angle) * p.radius;
-    p.y = cy + Math.sin(p.angle) * p.radius;
-    const trailX = cx + Math.cos(p.angle) * Math.max(0, p.radius - 18);
-    const trailY = cy + Math.sin(p.angle) * Math.max(0, p.radius - 18);
-    const hue = Math.random() > 0.82 ? "168,85,247" : "45,91,255";
-    genCtx.beginPath();
-    genCtx.strokeStyle = `rgba(${hue},${Math.min(0.7, p.life)})`;
-    genCtx.lineWidth = p.size * 0.7;
-    genCtx.moveTo(trailX, trailY);
-    genCtx.lineTo(p.x, p.y);
-    genCtx.stroke();
-    genCtx.beginPath();
-    genCtx.fillStyle = `rgba(${hue},${Math.min(0.95, p.life + 0.2)})`;
-    genCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-    genCtx.fill();
-  });
+  const targetCount = Math.min(220, 140 + Math.round(genProgress * 80));
+  while (genParticles.length < targetCount) {
+    genParticles.push({
+      angle: Math.random() * Math.PI * 2,
+      radius: 8 + Math.random() * Math.min(w, h) * 0.06,
+      speed: 0.4 + Math.random() * 1.5,
+      size: 0.8 + Math.random() * 1.2,
+      life: 0.45 + Math.random() * 0.55,
+      spin: (Math.random() - 0.5) * 0.08,
+      twinkle: Math.random() * Math.PI * 2,
+      orbit: 0.14 + Math.random() * 0.6,
+    });
+  }
 
-  const t = performance.now() * 0.0024;
+  genParticles.forEach((p) => {
+    p.twinkle += 0.02 + genProgress * 0.02;
+    p.angle += p.spin + Math.sin(ts * 0.005 + p.twinkle) * 0.02;
+    p.radius += p.speed * (1.1 + genProgress);
+    p.life *= 0.9955;
+    if (p.radius > Math.max(w, h) * 0.64 || p.life < 0.16) {
+      p.angle = Math.random() * Math.PI * 2;
+      p.radius = Math.random() * 16;
+      p.speed = 0.4 + Math.random() * 1.5;
+      p.life = 0.45 + Math.random() * 0.55;
+      p.twinkle = Math.random() * Math.PI * 2;
+    }
+
+    const wobble = Math.sin(ts * 0.004 + p.twinkle) * 12 * p.orbit;
+    const x = cx + Math.cos(p.angle) * (p.radius + wobble);
+    const y = cy + Math.sin(p.angle) * (p.radius - wobble * 0.6);
+    const size = 4 + p.life * 5 + p.size * 1.6;
+    const alpha = Math.min(0.92, 0.2 + p.life);
+    const rot = p.angle + ts * 0.0015;
+
+    genCtx.shadowBlur = 15;
+    genCtx.shadowColor = `hsla(${hue}, 100%, 65%, 0.9)`;
+    drawAnimeStar(genCtx, x, y, size, rot, hue, alpha);
+  });
+  genCtx.shadowBlur = 0;
+
+  const core = genCtx.createRadialGradient(cx, cy, 0, cx, cy, 110 + genProgress * 90);
+  core.addColorStop(0, "rgba(255,255,255,0.86)");
+  core.addColorStop(0.15, `hsla(${hue}, 100%, 80%, 0.5)`);
+  core.addColorStop(0.55, `hsla(${Math.max(180, hue - 40)}, 100%, 72%, 0.12)`);
+  core.addColorStop(1, "rgba(255,255,255,0)");
+  genCtx.fillStyle = core;
+  genCtx.beginPath();
+  genCtx.arc(cx, cy, 88 + pulse * 18 + genProgress * 42, 0, Math.PI * 2);
+  genCtx.fill();
+
+  const t = ts * (0.0024 + genProgress * 0.0022);
   const scanA = ((Math.sin(t) * 0.5) + 0.5) * h;
   const scanB = ((Math.sin(t + 1.8) * 0.5) + 0.5) * h;
   [scanA, scanB].forEach((scanY, idx) => {
+    const line = genCtx.createLinearGradient(0, scanY, w, scanY);
+    line.addColorStop(0, "rgba(255,106,213,0)");
+    line.addColorStop(0.5, idx === 0 ? "rgba(255,106,213,0.42)" : "rgba(0,204,255,0.34)");
+    line.addColorStop(1, "rgba(0,204,255,0)");
     genCtx.beginPath();
-    genCtx.strokeStyle = idx === 0 ? "rgba(45,91,255,0.55)" : "rgba(168,85,247,0.32)";
-    genCtx.lineWidth = idx === 0 ? 2 : 1;
+    genCtx.strokeStyle = line;
+    genCtx.lineWidth = idx === 0 ? 2.2 : 1.2;
     genCtx.moveTo(0, scanY);
     genCtx.lineTo(w, scanY);
     genCtx.stroke();
@@ -198,6 +263,7 @@ function renderGenerationFrame() {
 
 function startGenerationVisual() {
   if (!generatingOverlay) return;
+  generatingOverlay.classList.remove("collapsing");
   generatingOverlay.classList.add("active");
   ensureGenerationCanvas();
   seedGenerationParticles();
@@ -218,8 +284,22 @@ function updateGenerationVisual(percent) {
 function stopGenerationVisual() {
   if (genFrame) cancelAnimationFrame(genFrame);
   genFrame = null;
-  if (generatingOverlay) generatingOverlay.classList.remove("active");
+  if (generatingOverlay) {
+    generatingOverlay.classList.add("collapsing");
+    setTimeout(() => {
+      generatingOverlay.classList.remove("active", "collapsing");
+    }, 500);
+  }
   if (genCtx && genCanvas) genCtx.clearRect(0, 0, genCanvas.width, genCanvas.height);
+}
+
+function pulseValue(el) {
+  if (!el) return;
+  el.classList.remove("is-pulsing");
+  requestAnimationFrame(() => {
+    el.classList.add("is-pulsing");
+    setTimeout(() => el.classList.remove("is-pulsing"), 420);
+  });
 }
 
 function formatPhaseLine(data) {
@@ -724,6 +804,7 @@ function syncRangeUI(rangeEl, valueEl, digits = 2) {
   if (!rangeEl || !valueEl) return;
   const v = Number.parseFloat(rangeEl.value);
   valueEl.textContent = Number.isInteger(v) ? String(v) : v.toFixed(digits);
+  pulseValue(valueEl);
 }
 
 function applyScenePreset(sceneKey) {
@@ -1010,9 +1091,10 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   img.alt = altText;
   img.loading = imageIndex > 0 ? "lazy" : "eager";
   img.style.display = "block";
-  img.style.maxHeight = "calc(80vh - 160px)";
+  img.style.maxHeight = "calc(84vh - 40px)";
+  img.style.maxWidth = "min(98%, 1040px)";
   img.style.boxShadow = "0 24px 70px rgba(0,0,0,0.38)";
-  img.classList.add("fade-in");
+  img.classList.add("fade-in", "active");
   wrap.appendChild(img);
   const actions = document.createElement("div");
   actions.className = "result-actions";
