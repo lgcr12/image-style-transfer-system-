@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -368,15 +368,66 @@
 
       #run-btn {
         border-radius: 999px !important;
-        background: linear-gradient(135deg, var(--anime-pink), var(--anime-blue)) !important;
+        background: linear-gradient(135deg, #7c5cff 0%, #4f8df7 45%, #25c7a3 100%) !important;
         color: white !important;
         border: none !important;
-        box-shadow: 0 15px 35px rgba(255, 106, 213, 0.35) !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.02em;
+        box-shadow: 0 16px 34px rgba(79, 141, 247, 0.28) !important;
       }
 
       #run-btn:hover {
-        transform: scale(1.03) translateY(-2px);
-        box-shadow: 0 20px 44px rgba(255, 106, 213, 0.42) !important;
+        transform: scale(1.04) translateY(-2px);
+        box-shadow: 0 20px 42px rgba(79, 141, 247, 0.34) !important;
+      }
+
+      .top-nav {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .top-nav-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 0 18px;
+        border-radius: 999px;
+        border: 2px solid transparent;
+        background-image:
+          linear-gradient(rgba(255, 253, 245, 0.82), rgba(255, 253, 245, 0.82)),
+          linear-gradient(135deg, rgba(255, 106, 213, 0.96), rgba(0, 204, 255, 0.92));
+        background-origin: border-box;
+        background-clip: padding-box, border-box;
+        color: #475569;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        text-decoration: none;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 10px 24px rgba(255, 106, 213, 0.08);
+        transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.32s ease, color 0.24s ease, background-color 0.24s ease;
+      }
+
+      .top-nav-pill:hover {
+        transform: scale(1.08) translateY(-3px);
+        color: #0f172a;
+        box-shadow: 0 18px 34px rgba(255, 106, 213, 0.18), 0 0 24px rgba(0, 204, 255, 0.16);
+      }
+
+      .top-nav-pill.is-current {
+        color: #0f172a;
+        box-shadow: 0 18px 34px rgba(255, 106, 213, 0.18), 0 0 24px rgba(0, 204, 255, 0.16);
+      }
+
+      .top-nav-pill.is-current::before {
+        content: "+";
+        font-size: 14px;
+        line-height: 1;
+        font-weight: 700;
+        color: #475569;
+        margin-right: -2px;
       }
 
       textarea,
@@ -416,13 +467,12 @@
             <div class="text-[10px] tracking-[0.22em] text-slate-400">Stable Diffusion</div>
           </div>
         </div>
-        <div class="flex items-center gap-3 text-[11px] text-slate-500">
-          <span class="mono hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 md:inline-flex">模式：SD 重绘</span>
-          <a href="/" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">风格迁移</a>
-          <a href="/gallery" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">画廊</a>
+        <div class="top-nav text-[11px] text-slate-500">
+          <span class="top-nav-pill is-current mono hidden md:inline-flex">模式：SD 重绘</span>
+          <a href="/" class="top-nav-pill">风格迁移</a>
+          <a href="/local-history" class="top-nav-pill">历史记录</a>
         </div>
       </header>
-
       <main class="flex flex-1 flex-row overflow-hidden">
         <aside id="sidebar" class="flex w-[340px] flex-col overflow-y-auto border-r border-[rgba(0,0,0,0.04)] bg-white px-6 py-6">
           <section class="space-y-3">
@@ -438,7 +488,7 @@
           <section class="sidebar-section space-y-3">
             <div class="section-label">主题色</div>
             <label class="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white px-3 py-3 text-xs text-slate-500">
-              <span>背景光谱</span>
+              <span>背景光色</span>
               <input id="bg-color-input" type="color" value="#2d5bff" class="h-9 w-12 cursor-pointer rounded-lg border border-slate-200 bg-transparent p-1" />
             </label>
           </section>
@@ -582,7 +632,7 @@
               <div id="progress-hud" class="result-stage hidden rounded-2xl px-4 py-3">
                 <div class="flex items-center gap-3">
                   <div class="h-2.5 w-2.5 rounded-full bg-blue-400"></div>
-                  <div class="text-[11px] font-bold tracking-[0.2em] text-slate-500">渲染进度</div>
+                  <div class="text-[11px] font-bold tracking-[0.2em] text-slate-500">娓叉煋杩涘害</div>
                   <div id="progress-value" class="mono ml-auto text-[12px] text-blue-300">0%</div>
                 </div>
                 <div id="progress-phase" class="mt-2 text-sm font-semibold text-slate-700">等待任务开始</div>
@@ -705,3 +755,7 @@
     </script>
   </body>
 </html>
+
+
+
+

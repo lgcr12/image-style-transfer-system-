@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -401,6 +401,42 @@
         transform: none;
         box-shadow: none;
       }
+      .top-nav {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .top-nav-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 0 18px;
+        border-radius: 12px;
+        border: none;
+        background: #2563eb;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        text-decoration: none;
+        box-shadow: 0 10px 30px rgba(45, 91, 255, 0.24);
+        transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .top-nav-pill:hover {
+        transform: translateY(-2px);
+        background: #1d4ed8;
+        color: #fff;
+        box-shadow: 0 16px 38px rgba(45, 91, 255, 0.28);
+      }
+
+      .top-nav-pill.is-current {
+        background: #2563eb;
+        color: #fff;
+        box-shadow: 0 10px 30px rgba(45, 91, 255, 0.24);
+      }
     </style>
   </head>
   <body class="h-screen overflow-hidden bg-[#f9fafb] text-slate-900 antialiased">
@@ -413,10 +449,10 @@
             <div class="text-[10px] tracking-[0.22em] text-slate-400">经典模型路线</div>
           </div>
         </div>
-        <div class="flex items-center gap-3 text-[11px] text-slate-500">
-          <span class="mono hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 md:inline-flex">模型：经典风格迁移</span>
-          <a href="/sd" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">SD 动漫页</a>
-          <a href="/gallery" class="rounded-full border border-slate-200 px-4 py-1.5 transition hover:bg-slate-50">画廊</a>
+        <div class="top-nav text-[11px] text-slate-500">
+          <span class="top-nav-pill is-current mono hidden md:inline-flex">模型：经典风格迁移</span>
+          <a href="/sd" class="top-nav-pill">SD 动漫页</a>
+          <a href="/local-history" class="top-nav-pill">历史记录</a>
         </div>
       </header>
 
@@ -522,7 +558,7 @@
                   </div>
                   <div class="processing-meta">
                     <div id="processing-steps" class="processing-steps">Steps 00 / 30</div>
-                    <div id="processing-model" class="processing-model">Sampler · DPM++ 2M Karras</div>
+                    <div id="processing-model" class="processing-model">Sampler 路 DPM++ 2M Karras</div>
                   </div>
                 </div>
               </div>
@@ -536,7 +572,7 @@
                   </div>
                   <div class="processing-meta">
                     <div class="processing-steps">Steps 00 / 30</div>
-                    <div class="processing-model">Sampler · DPM++ 2M Karras</div>
+                    <div class="processing-model">Sampler 路 DPM++ 2M Karras</div>
                   </div>
                 </div>
               </div>
@@ -567,3 +603,8 @@
     <script src="/static/main.js"></script>
   </body>
 </html>
+
+
+
+
+
