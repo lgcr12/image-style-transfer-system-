@@ -39,7 +39,7 @@
       node.classList.add("opacity-0", "translate-y-4");
       node.style.transition =
         "opacity 0.6s cubic-bezier(0.23, 1, 0.32, 1), transform 0.6s cubic-bezier(0.23, 1, 0.32, 1)";
-      node.style.transitionDelay = `${index * 0.05}s`;
+      node.style.transitionDelay = `${index * 0.1}s`;
       requestAnimationFrame(() => {
         node.classList.remove("opacity-0", "translate-y-4");
       });

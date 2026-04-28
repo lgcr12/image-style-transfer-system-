@@ -7,6 +7,9 @@ import json
 import asyncio
 import time
 import os
+import gzip
+import urllib.parse
+import urllib.request
 from html import escape
 from pathlib import Path
 from typing import Dict
@@ -55,6 +58,10 @@ app = FastAPI()
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+QWEATHER_KEY = os.getenv("QWEATHER_API_KEY", "")
+QWEATHER_API_HOST = os.getenv("QWEATHER_API_HOST", "nq5egn2wpt.re.qweatherapi.com")
+QWEATHER_LOCATION_ID = os.getenv("QWEATHER_LOCATION_ID", "101010100")
 
 
 @app.on_event("startup")
@@ -368,6 +375,89 @@ async def local_history_page(request: Request):
         "local_history.html",
         {"request": request},
     )
+
+
+@app.get("/api/weather/now")
+async def api_weather_now():
+    if not QWEATHER_KEY:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "missing_api_key",
+                "message": "请设置 QWEATHER_API_KEY 环境变量",
+            },
+            status_code=503,
+        )
+
+    params = urllib.parse.urlencode({"location": QWEATHER_LOCATION_ID})
+    url = f"https://{QWEATHER_API_HOST}/v2/weather/now?{params}"
+
+    try:
+        request = urllib.request.Request(
+            url.replace("/v2/", "/v7/"),
+            headers={
+                "X-QW-Api-Key": QWEATHER_KEY,
+                "Accept-Encoding": "gzip",
+                "User-Agent": "models-local-history/1.0",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read()
+            if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            body = raw.decode("utf-8", errors="replace")
+            if not body.strip():
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "empty_response",
+                        "message": "天气服务返回空响应",
+                    },
+                    status_code=502,
+                )
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "invalid_json",
+                        "message": "天气服务返回了非 JSON 内容",
+                        "raw": body[:300],
+                    },
+                    status_code=502,
+                )
+
+            if str(data.get("code")) != "200" or not data.get("now"):
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "upstream_error",
+                        "message": "天气服务未返回有效天气数据",
+                        "upstream": data,
+                    },
+                    status_code=502,
+                )
+
+            now = data["now"]
+            return {
+                "ok": True,
+                "text": now.get("text", "多云"),
+                "temp": now.get("temp", "--"),
+                "icon": now.get("icon", ""),
+                "fetched_at": int(time.time() * 1000),
+                "location": QWEATHER_LOCATION_ID,
+            }
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "request_failed",
+                "message": str(exc),
+                "host": QWEATHER_API_HOST,
+            },
+            status_code=502,
+        )
 
 
 @app.get("/gallery", response_class=HTMLResponse)
