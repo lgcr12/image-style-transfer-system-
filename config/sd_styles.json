@@ -2,48 +2,120 @@
   "styles": {
     "default": {
       "label": "两个 LoRA 都用（0.8 / 0.7）",
-      "adapters": ["lora1", "lora2"],
-      "weights": [0.8, 0.7]
+      "adapters": [
+        "lora1",
+        "lora2"
+      ],
+      "weights": [
+        0.8,
+        0.7
+      ]
     },
     "lora1": {
       "label": "水彩泼墨画",
-      "adapters": ["lora1"],
-      "weights": [1.0]
+      "adapters": [
+        "lora1"
+      ],
+      "weights": [
+        1.0
+      ]
     },
     "lora2": {
       "label": "百花缭乱 Midjourney",
-      "adapters": ["lora2"],
-      "weights": [1.0]
+      "adapters": [
+        "lora2"
+      ],
+      "weights": [
+        1.0
+      ]
     },
     "kyoto": {
       "label": "京阿尼Kyoto Anime",
-      "adapters": ["kyoto"],
-      "weights": [1.0]
+      "adapters": [
+        "kyoto"
+      ],
+      "weights": [
+        1.0
+      ]
     },
     "shinkai_char": {
       "label": "新海诚Character（0.8）",
-      "adapters": ["shinkai_char"],
-      "weights": [0.8]
+      "adapters": [
+        "shinkai_char"
+      ],
+      "weights": [
+        0.8
+      ]
     },
     "shinkai_view": {
       "label": "新海诚 View（0.7）",
-      "adapters": ["shinkai_view"],
-      "weights": [0.7]
+      "adapters": [
+        "shinkai_view"
+      ],
+      "weights": [
+        0.7
+      ]
     },
     "ukiyo": {
       "label": "浮世绘（0.8）",
-      "adapters": ["ukiyo"],
-      "weights": [0.8]
+      "adapters": [
+        "ukiyo"
+      ],
+      "weights": [
+        0.8
+      ]
     },
     "shinkai_mix": {
       "label": "Shinkai View + Character + Ukiyo",
-      "adapters": ["shinkai_view", "shinkai_char", "ukiyo"],
-      "weights": [0.7, 0.8, 0.8]
+      "adapters": [
+        "shinkai_view",
+        "shinkai_char",
+        "ukiyo"
+      ],
+      "weights": [
+        0.7,
+        0.8,
+        0.8
+      ]
     },
     "jojo": {
       "label": "JoJo（推荐 0.6~0.8）",
-      "adapters": ["jojo"],
-      "weights": [0.7]
+      "adapters": [
+        "jojo"
+      ],
+      "weights": [
+        0.7
+      ]
+    },
+    "xl_-lora_v1": {
+      "label": "动漫头像",
+      "adapters": [
+        "xl_-lora_v1_adapter"
+      ],
+      "weights": [
+        1.0
+      ],
+      "base_model": "animagine_xl_3_1"
+    },
+    "lora_v1_0_3268f4": {
+      "label": "日本旧漫风格",
+      "adapters": [
+        "lora_v1_0_3268f4_adapter"
+      ],
+      "weights": [
+        0.9
+      ],
+      "base_model": "meinamix_v12"
+    },
+    "sd_-": {
+      "label": "像素动漫",
+      "adapters": [
+        "sd_-_adapter"
+      ],
+      "weights": [
+        0.8
+      ],
+      "base_model": "leosam_aiart_sdxl_v2"
     }
   },
   "adapters": {
@@ -74,6 +146,54 @@
     "ukiyo": {
       "env": "SD_LORA_7_PATH",
       "default_path": "E:/models/ukiyo.safetensors"
+    },
+    "xl_-lora_v1_adapter": {
+      "env": "SD_IMPORTED_XL_-LORA_V1_PATH",
+      "default_path": "E:/models/imported_models/可爱动漫风大头像_XL版-Lora_v1.safetensors"
+    },
+    "lora_v1_0_3268f4_adapter": {
+      "env": "SD_IMPORTED_LORA_V1_0_3268F4_PATH",
+      "default_path": "E:/models/imported_models/lora_日本旧漫风格_北条司_桂正和_v1_0_3268f4.safetensors"
+    },
+    "sd_-_adapter": {
+      "env": "SD_IMPORTED_SD_-_PATH",
+      "default_path": "E:/models/imported_models/像素风-可爱动漫_动漫像素风.safetensors"
     }
-  }
+  },
+  "base_models": {
+    "animagine_xl_3_1": {
+      "label": "Animagine XL 3.1",
+      "type": "diffusers_sdxl",
+      "model_type": "sdxl",
+      "path": "E:/models/imported_models/animagine-xl-3.1",
+      "config_dir": "",
+      "recommended_steps": 28,
+      "recommended_cfg": 7.0,
+      "recommended_width": 1024,
+      "recommended_height": 1024
+    },
+    "meinamix_v12": {
+      "label": "MeinaMix V12 (SD 1.5)",
+      "type": "single_file",
+      "model_type": "sd15",
+      "path": "E:/models/MeinaMixV12.safetensors",
+      "config_dir": "E:/models/sd_base_v1_5",
+      "recommended_steps": 30,
+      "recommended_cfg": 5.5,
+      "recommended_width": 768,
+      "recommended_height": 768
+    },
+    "leosam_aiart_sdxl_v2": {
+      "label": "LEOSAM AIArt SDXL v2",
+      "type": "single_file",
+      "model_type": "sdxl",
+      "path": "E:/models/imported_models/LEOSAM AIArt 兔狲插画 SDXL大模型_v2.safetensors",
+      "config_dir": "E:/models/imported_models/animagine-xl-3.1",
+      "recommended_steps": 28,
+      "recommended_cfg": 7.0,
+      "recommended_width": 1024,
+      "recommended_height": 1024
+    }
+  },
+  "active_base_model": "animagine_xl_3_1"
 }

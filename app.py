@@ -14,6 +14,8 @@ from html import escape
 from pathlib import Path
 from typing import Dict
 
+import onnxruntime as ort
+from safetensors import safe_open
 from fastapi import FastAPI, UploadFile, File, Form, Query
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
@@ -24,14 +26,18 @@ from fastapi import Request
 from PIL import Image
 
 from style_transfer import load_model, run_style_transfer, AVAILABLE_MODELS
+import style_transfer as style_transfer_module
 from sd_style_transfer import (
     run_sd_style_transfer,
     run_sd_style_transfer_candidates,
     warmup_pipeline,
     get_warmup_status,
     get_sd_style_config,
+    get_sd_base_models,
+    get_active_base_model_key,
     AVAILABLE_SD_STYLES,
 )
+import sd_style_transfer as sd_style_transfer_module
 from image_analyzer import analyze_image
 from recipe_scorer import score_image
 from job_queue import JobQueue, QueueJob
@@ -45,12 +51,14 @@ RESULT_DIR = BASE_DIR / "results"
 META_DIR = RESULT_DIR / "meta"
 EXPORT_DIR = RESULT_DIR / "exports"
 SHARE_DIR = RESULT_DIR / "share"
+IMPORTED_MODEL_DIR = BASE_DIR / "imported_models"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 RESULT_DIR.mkdir(exist_ok=True)
 META_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 SHARE_DIR.mkdir(parents=True, exist_ok=True)
+IMPORTED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 DB_DIR = BASE_DIR / "data"
 DB_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -62,6 +70,129 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 QWEATHER_KEY = os.getenv("QWEATHER_API_KEY", "")
 QWEATHER_API_HOST = os.getenv("QWEATHER_API_HOST", "nq5egn2wpt.re.qweatherapi.com")
 QWEATHER_LOCATION_ID = os.getenv("QWEATHER_LOCATION_ID", "101010100")
+STYLE_MODEL_CONFIG_PATH = BASE_DIR / "config" / "style_models.json"
+SD_STYLE_CONFIG_PATH = BASE_DIR / "config" / "sd_styles.json"
+
+
+def _slugify_model_key(value: str, *, prefix: str = "custom") -> str:
+    raw = (value or "").strip().lower()
+    raw = re.sub(r"[^a-z0-9_\-]+", "_", raw)
+    raw = re.sub(r"_+", "_", raw).strip("_")
+    if not raw:
+        raw = f"{prefix}_{uuid.uuid4().hex[:8]}"
+    if not re.match(r"^[a-z]", raw):
+        raw = f"{prefix}_{raw}"
+    return raw[:64]
+
+
+def _read_json_file(path: Path, fallback: dict) -> dict:
+    try:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return json.loads(json.dumps(fallback, ensure_ascii=False))
+
+
+def _write_json_file(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _safe_import_filename(filename: str, allowed_suffixes: set[str]) -> str:
+    name = Path(filename or "").name
+    suffix = Path(name).suffix.lower()
+    if suffix not in allowed_suffixes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的模型文件类型：{suffix or '无扩展名'}",
+        )
+    stem = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff]+", "_", Path(name).stem).strip("_")
+    if not stem:
+        stem = f"model_{uuid.uuid4().hex[:8]}"
+    return f"{stem}{suffix}"
+
+
+async def _save_import_file(upload: UploadFile, allowed_suffixes: set[str]) -> Path:
+    safe_name = _safe_import_filename(upload.filename or "", allowed_suffixes)
+    target = IMPORTED_MODEL_DIR / safe_name
+    if target.exists():
+        target = IMPORTED_MODEL_DIR / f"{target.stem}_{uuid.uuid4().hex[:6]}{target.suffix}"
+    target.write_bytes(await upload.read())
+    return target
+
+
+def _is_imported_model_path(path_value: str | None) -> bool:
+    if not path_value:
+        return False
+    try:
+        target = Path(path_value).resolve()
+        imported_root = IMPORTED_MODEL_DIR.resolve()
+        return target == imported_root or imported_root in target.parents
+    except Exception:
+        return False
+
+
+def _delete_imported_file(path_value: str | None) -> bool:
+    if not _is_imported_model_path(path_value):
+        return False
+    target = Path(str(path_value))
+    if target.is_file():
+        target.unlink()
+        return True
+    return False
+
+
+def _validate_safetensors(path: Path) -> None:
+    try:
+        with safe_open(str(path), framework="pt", device="cpu") as f:
+            if not list(f.keys()):
+                raise ValueError("safetensors 中没有 tensor")
+    except Exception as exc:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"LoRA 文件校验失败：{exc}") from exc
+
+
+def _validate_onnx(path: Path) -> None:
+    try:
+        ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    except Exception as exc:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"ONNX 文件校验失败：{exc}") from exc
+
+
+def _refresh_style_models() -> None:
+    AVAILABLE_MODELS.clear()
+    AVAILABLE_MODELS.update(style_transfer_module._load_model_labels())
+
+
+def _refresh_sd_styles(cfg: dict | None = None) -> None:
+    live_cfg = get_sd_style_config()
+    if cfg is not None:
+        live_cfg.clear()
+        live_cfg.update(cfg)
+    AVAILABLE_SD_STYLES.clear()
+    AVAILABLE_SD_STYLES.update(
+        {
+            k: str(v.get("label") or k)
+            for k, v in (live_cfg.get("styles") or {}).items()
+            if isinstance(v, dict) and not bool(v.get("disabled"))
+        }
+    )
+    pipe = getattr(sd_style_transfer_module, "_PIPELINE", None)
+    if pipe is not None:
+        setattr(pipe, "_lora_loaded", False)
+        setattr(pipe, "_lora_loaded_key", None)
 
 
 @app.on_event("startup")
@@ -367,6 +498,344 @@ async def sd_page(request: Request):
             "sd_styles": AVAILABLE_SD_STYLES,
         },
     )
+
+
+@app.get("/__model-import", response_class=HTMLResponse)
+async def model_import_page(request: Request):
+    return templates.TemplateResponse(
+        "model_import.html",
+        {
+            "request": request,
+            "models": AVAILABLE_MODELS,
+            "sd_styles": AVAILABLE_SD_STYLES,
+        },
+    )
+
+
+@app.get("/api/model-import/config")
+async def api_model_import_config():
+    style_cfg = _read_json_file(STYLE_MODEL_CONFIG_PATH, {"models": {}})
+    sd_cfg = get_sd_style_config()
+    return {
+        "style_models": AVAILABLE_MODELS,
+        "style_model_config": style_cfg.get("models") or {},
+        "sd_base_models": get_sd_base_models(),
+        "active_sd_base_model": get_active_base_model_key(),
+        "sd_styles": sd_cfg.get("styles") or {},
+        "sd_adapters": sd_cfg.get("adapters") or {},
+        "import_dir": str(IMPORTED_MODEL_DIR),
+    }
+
+
+@app.post("/api/model-import/sd-lora")
+async def api_model_import_sd_lora(
+    model_file: UploadFile = File(...),
+    key: str = Form(""),
+    label: str = Form(""),
+    weight: float = Form(0.8),
+    base_model: str = Form(""),
+):
+    saved_path = await _save_import_file(model_file, {".safetensors"})
+    _validate_safetensors(saved_path)
+    style_key = _slugify_model_key(key or saved_path.stem, prefix="sd")
+    adapter_key = f"{style_key}_adapter"
+    label = (label or saved_path.stem).strip()
+    weight_f = max(0.0, min(2.0, float(weight)))
+    base_model = (base_model or get_active_base_model_key()).strip()
+
+    cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+    base_models = cfg.setdefault("base_models", {})
+    if base_model and base_model not in base_models:
+        raise HTTPException(status_code=400, detail=f"找不到要绑定的基础模型：{base_model}")
+    styles = cfg.setdefault("styles", {})
+    adapters = cfg.setdefault("adapters", {})
+    if style_key in styles:
+        raise HTTPException(status_code=409, detail=f"SD 风格 key 已存在：{style_key}")
+
+    adapters[adapter_key] = {
+        "env": f"SD_IMPORTED_{style_key.upper()}_PATH",
+        "default_path": saved_path.as_posix(),
+    }
+    styles[style_key] = {
+        "label": label,
+        "adapters": [adapter_key],
+        "weights": [weight_f],
+        "base_model": base_model or "default",
+    }
+    _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+    _refresh_sd_styles(cfg)
+
+    return {
+        "ok": True,
+        "type": "sd_lora",
+        "key": style_key,
+        "label": label,
+        "path": saved_path.as_posix(),
+        "base_model": base_model or "default",
+    }
+
+
+@app.post("/api/model-import/sd-base")
+async def api_model_import_sd_base(
+    model_file: UploadFile = File(...),
+    key: str = Form(""),
+    label: str = Form(""),
+    config_dir: str = Form(""),
+    recommended_steps: int = Form(30),
+    recommended_cfg: float = Form(5.5),
+    recommended_width: int = Form(768),
+    recommended_height: int = Form(768),
+    set_active: bool = Form(True),
+):
+    saved_path = await _save_import_file(model_file, {".safetensors", ".ckpt"})
+    if saved_path.suffix.lower() == ".safetensors":
+        _validate_safetensors(saved_path)
+
+    base_key = _slugify_model_key(key or saved_path.stem, prefix="base")
+    label = (label or saved_path.stem).strip()
+    config_dir = (config_dir or str(sd_style_transfer_module.DEFAULT_SD_DIFFUSERS_DIR)).strip()
+    cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+    base_models = cfg.setdefault("base_models", {})
+    if base_key in base_models:
+        raise HTTPException(status_code=409, detail=f"基础模型 key 已存在：{base_key}")
+
+    base_models[base_key] = {
+        "label": label,
+        "type": "single_file",
+        "path": saved_path.as_posix(),
+        "config_dir": config_dir,
+        "recommended_steps": max(1, min(150, int(recommended_steps))),
+        "recommended_cfg": max(0.0, min(30.0, float(recommended_cfg))),
+        "recommended_width": max(64, min(2048, int(recommended_width))),
+        "recommended_height": max(64, min(2048, int(recommended_height))),
+    }
+    cfg.setdefault("active_base_model", get_active_base_model_key())
+    if set_active:
+        cfg["active_base_model"] = base_key
+
+    _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+    _refresh_sd_styles(cfg)
+    if set_active:
+        sd_style_transfer_module.reset_pipeline()
+
+    return {
+        "ok": True,
+        "type": "sd_base",
+        "key": base_key,
+        "label": label,
+        "path": saved_path.as_posix(),
+        "active": bool(set_active),
+    }
+
+
+@app.post("/api/model-import/sd-base-active")
+async def api_model_import_sd_base_active(key: str = Form(...)):
+    key = key.strip()
+    cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+    base_models = cfg.setdefault("base_models", {})
+    item = base_models.get(key)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail=f"找不到基础模型：{key}")
+    if bool(item.get("disabled")):
+        raise HTTPException(status_code=400, detail=f"基础模型已停用：{key}")
+    cfg["active_base_model"] = key
+    _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+    _refresh_sd_styles(cfg)
+    sd_style_transfer_module.reset_pipeline()
+    return {"ok": True, "key": key}
+
+
+@app.post("/api/model-import/sd-style-base")
+async def api_model_import_sd_style_base(
+    style_key: str = Form(...),
+    base_model: str = Form(...),
+):
+    style_key = style_key.strip()
+    base_model = base_model.strip()
+    cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+    styles = cfg.setdefault("styles", {})
+    base_models = cfg.setdefault("base_models", {})
+    style = styles.get(style_key)
+    if not isinstance(style, dict):
+        raise HTTPException(status_code=404, detail=f"找不到 SD 风格：{style_key}")
+    if base_model not in base_models:
+        raise HTTPException(status_code=404, detail=f"找不到基础模型：{base_model}")
+    style["base_model"] = base_model
+    _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+    _refresh_sd_styles(cfg)
+    return {"ok": True, "style_key": style_key, "base_model": base_model}
+
+
+@app.post("/api/model-import/style-onnx")
+async def api_model_import_style_onnx(
+    model_file: UploadFile = File(...),
+    key: str = Form(""),
+    label: str = Form(""),
+):
+    saved_path = await _save_import_file(model_file, {".onnx"})
+    _validate_onnx(saved_path)
+    model_key = _slugify_model_key(key or saved_path.stem, prefix="style")
+    label = (label or saved_path.stem).strip()
+
+    cfg = _read_json_file(STYLE_MODEL_CONFIG_PATH, {"models": {}})
+    models = cfg.setdefault("models", {})
+    if model_key in models:
+        raise HTTPException(status_code=409, detail=f"风格模型 key 已存在：{model_key}")
+
+    models[model_key] = {
+        "label": label,
+        "type": "animegan_onnx",
+        "path": saved_path.as_posix(),
+    }
+    _write_json_file(STYLE_MODEL_CONFIG_PATH, cfg)
+    _refresh_style_models()
+    cache = getattr(style_transfer_module.load_model, "_cache", None)
+    if isinstance(cache, dict):
+        cache.pop(model_key, None)
+
+    return {
+        "ok": True,
+        "type": "style_onnx",
+        "key": model_key,
+        "label": label,
+        "path": saved_path.as_posix(),
+    }
+
+
+@app.post("/api/model-import/toggle")
+async def api_model_import_toggle(
+    target: str = Form(...),
+    key: str = Form(...),
+    enabled: bool = Form(...),
+):
+    target = target.strip().lower()
+    key = key.strip()
+    if target == "sd":
+        cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+        styles = cfg.setdefault("styles", {})
+        item = styles.get(key)
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=404, detail=f"找不到 SD 风格：{key}")
+        if enabled:
+            item.pop("disabled", None)
+        else:
+            item["disabled"] = True
+        _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+        _refresh_sd_styles(cfg)
+        return {"ok": True, "target": target, "key": key, "enabled": enabled}
+
+    if target == "base":
+        cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+        base_models = cfg.setdefault("base_models", {})
+        item = base_models.get(key)
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=404, detail=f"找不到基础模型：{key}")
+        if enabled:
+            item.pop("disabled", None)
+        else:
+            if str(cfg.get("active_base_model") or "default") == key:
+                raise HTTPException(status_code=400, detail="当前基础模型不能直接停用，请先切换到其他基础模型")
+            item["disabled"] = True
+        _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+        _refresh_sd_styles(cfg)
+        return {"ok": True, "target": target, "key": key, "enabled": enabled}
+
+    if target == "style":
+        cfg = _read_json_file(STYLE_MODEL_CONFIG_PATH, {"models": {}})
+        models = cfg.setdefault("models", {})
+        item = models.get(key)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"找不到风格模型：{key}")
+        if isinstance(item, dict):
+            if enabled:
+                item.pop("disabled", None)
+            else:
+                item["disabled"] = True
+        else:
+            models[key] = {"label": str(item), "disabled": not enabled}
+        _write_json_file(STYLE_MODEL_CONFIG_PATH, cfg)
+        _refresh_style_models()
+        cache = getattr(style_transfer_module.load_model, "_cache", None)
+        if isinstance(cache, dict):
+            cache.pop(key, None)
+        return {"ok": True, "target": target, "key": key, "enabled": enabled}
+
+    raise HTTPException(status_code=400, detail="target 只能是 sd、base 或 style")
+
+
+@app.post("/api/model-import/delete")
+async def api_model_import_delete(
+    target: str = Form(...),
+    key: str = Form(...),
+    delete_file: bool = Form(False),
+):
+    target = target.strip().lower()
+    key = key.strip()
+    deleted_files: list[str] = []
+
+    if target == "sd":
+        cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+        styles = cfg.setdefault("styles", {})
+        adapters = cfg.setdefault("adapters", {})
+        item = styles.pop(key, None)
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=404, detail=f"找不到 SD 风格：{key}")
+
+        adapter_keys = list(item.get("adapters") or [])
+        used_elsewhere = {
+            adapter
+            for name, style in styles.items()
+            if name != key and isinstance(style, dict)
+            for adapter in (style.get("adapters") or [])
+        }
+        for adapter_key in adapter_keys:
+            if adapter_key in used_elsewhere:
+                continue
+            adapter_info = adapters.pop(adapter_key, None)
+            if delete_file and isinstance(adapter_info, dict):
+                path_value = str(adapter_info.get("default_path") or "")
+                if _delete_imported_file(path_value):
+                    deleted_files.append(path_value)
+
+        _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+        _refresh_sd_styles(cfg)
+        return {"ok": True, "target": target, "key": key, "deleted_files": deleted_files}
+
+    if target == "base":
+        cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}})
+        base_models = cfg.setdefault("base_models", {})
+        item = base_models.pop(key, None)
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=404, detail=f"找不到基础模型：{key}")
+        if str(cfg.get("active_base_model") or "default") == key:
+            cfg["active_base_model"] = "default"
+            sd_style_transfer_module.reset_pipeline()
+        if delete_file:
+            path_value = str(item.get("path") or "")
+            if _delete_imported_file(path_value):
+                deleted_files.append(path_value)
+        _write_json_file(SD_STYLE_CONFIG_PATH, cfg)
+        _refresh_sd_styles(cfg)
+        return {"ok": True, "target": target, "key": key, "deleted_files": deleted_files}
+
+    if target == "style":
+        cfg = _read_json_file(STYLE_MODEL_CONFIG_PATH, {"models": {}})
+        models = cfg.setdefault("models", {})
+        item = models.pop(key, None)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"找不到风格模型：{key}")
+        if delete_file and isinstance(item, dict):
+            path_value = str(item.get("path") or "")
+            if _delete_imported_file(path_value):
+                deleted_files.append(path_value)
+        _write_json_file(STYLE_MODEL_CONFIG_PATH, cfg)
+        _refresh_style_models()
+        cache = getattr(style_transfer_module.load_model, "_cache", None)
+        if isinstance(cache, dict):
+            cache.pop(key, None)
+        return {"ok": True, "target": target, "key": key, "deleted_files": deleted_files}
+
+    raise HTTPException(status_code=400, detail="target 只能是 sd、base 或 style")
 
 
 @app.get("/local-history", response_class=HTMLResponse)
@@ -804,6 +1273,7 @@ async def api_rerun(job_id: str):
 
     if mode == "sd":
         sd_style_name = str(params.get("sd_style_name") or "default")
+        base_model = str(params.get("base_model") or "default")
         denoise = float(params.get("denoising_strength") or 0.65)
         guidance = float(params.get("guidance_scale") or 5.5)
         steps = int(params.get("num_inference_steps") or 30)
@@ -812,6 +1282,7 @@ async def api_rerun(job_id: str):
         quick_mode = bool(params.get("quick_mode") or False)
         rerun_params = {
             "sd_style_name": sd_style_name,
+            "base_model": base_model,
             "denoising_strength": denoise,
             "guidance_scale": guidance,
             "num_inference_steps": steps,
@@ -829,6 +1300,7 @@ async def api_rerun(job_id: str):
                 await asyncio.to_thread(
                     run_sd_style_transfer,
                     sd_style_name=sd_style_name,
+                    base_model_key=base_model,
                     content_path=new_content_path,
                     output_path=new_result_path,
                     denoising_strength=denoise,
@@ -885,6 +1357,7 @@ async def api_bg_gif(filename: str):
 async def api_sd_style_transfer(
     content_image: UploadFile = File(...),
     sd_style_name: str = Form("default"),
+    base_model: str = Form("default"),
     denoising_strength: float = Form(0.65),
     guidance_scale: float = Form(5.5),
     num_inference_steps: int = Form(30),
@@ -906,6 +1379,7 @@ async def api_sd_style_transfer(
     jobs[job_id] = job
     submit_params = {
         "sd_style_name": sd_style_name,
+        "base_model": base_model,
         "denoising_strength": denoising_strength,
         "guidance_scale": guidance_scale,
         "num_inference_steps": num_inference_steps,
@@ -952,6 +1426,7 @@ async def api_sd_style_transfer(
                     output_dir=out_dir,
                     output_prefix=job_id,
                     sd_style_name=sd_style_name,
+                    base_model_key=base_model,
                     content_path=content_path,
                     denoising_strength=denoising_strength,
                     guidance_scale=guidance_scale,
@@ -976,6 +1451,7 @@ async def api_sd_style_transfer(
                 await asyncio.to_thread(
                     run_sd_style_transfer,
                     sd_style_name=sd_style_name,
+                    base_model_key=base_model,
                     content_path=content_path,
                     output_path=result_path,
                     denoising_strength=denoising_strength,
@@ -1008,6 +1484,7 @@ async def api_sd_style_transfer(
                     "job_id": job_id,
                     "style": sd_style_name,
                     "params": {
+                        "base_model": base_model,
                         "denoise": denoising_strength,
                         "guidance": guidance_scale,
                         "steps": num_inference_steps,
@@ -1110,7 +1587,12 @@ async def api_system_stats():
 @app.get("/api/plugins/sd-styles")
 async def api_sd_style_plugins():
     cfg = get_sd_style_config()
-    return {"styles": cfg.get("styles") or {}, "adapters": cfg.get("adapters") or {}}
+    return {
+        "styles": cfg.get("styles") or {},
+        "adapters": cfg.get("adapters") or {},
+        "base_models": get_sd_base_models(),
+        "active_base_model": get_active_base_model_key(),
+    }
 
 
 @app.get("/api/eval/summary")
@@ -1215,6 +1697,7 @@ async def api_cancel_job_compat(job_id: str):
 async def api_batch_submit(
     content_images: list[UploadFile] = File(...),
     sd_style_name: str = Form("default"),
+    base_model: str = Form("default"),
     denoising_strength: float = Form(0.65),
     guidance_scale: float = Form(5.5),
     num_inference_steps: int = Form(30),
@@ -1229,6 +1712,7 @@ async def api_batch_submit(
         resp = await api_sd_style_transfer(
             content_image=upload,
             sd_style_name=sd_style_name,
+            base_model=base_model,
             denoising_strength=denoising_strength,
             guidance_scale=guidance_scale,
             num_inference_steps=num_inference_steps,

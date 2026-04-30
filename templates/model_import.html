@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>模型导入后门</title>
+    <style>
+      :root {
+        --bg: #060914;
+        --panel: rgba(255, 255, 255, 0.08);
+        --panel-strong: rgba(255, 255, 255, 0.12);
+        --line: rgba(255, 255, 255, 0.14);
+        --text: #e5edf7;
+        --muted: #8ea0b8;
+        --accent: #2d5bff;
+        --green: #10b981;
+        --danger: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 12% 10%, rgba(45, 91, 255, 0.18), transparent 34%),
+          radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.12), transparent 36%),
+          var(--bg);
+      }
+
+      main {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 56px 0;
+      }
+
+      .hero,
+      .card,
+      .list-card {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--panel);
+        backdrop-filter: blur(24px);
+        box-shadow: 0 28px 90px rgba(0, 0, 0, 0.28);
+      }
+
+      .hero {
+        padding: 28px;
+        margin-bottom: 22px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 10px;
+      }
+
+      .hero p,
+      .hint,
+      .result,
+      .meta {
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      code {
+        color: #bfdbfe;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 22px;
+      }
+
+      .card,
+      .list-card {
+        padding: 24px;
+      }
+
+      label {
+        display: block;
+        margin: 14px 0 8px;
+        color: #cbd5e1;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      input,
+      select,
+      button {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 14px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.08);
+        outline: none;
+      }
+
+      input:focus {
+        border-color: rgba(45, 91, 255, 0.8);
+        box-shadow: 0 0 0 4px rgba(45, 91, 255, 0.14);
+      }
+
+      select:focus {
+        border-color: rgba(45, 91, 255, 0.8);
+        box-shadow: 0 0 0 4px rgba(45, 91, 255, 0.14);
+      }
+
+      button {
+        cursor: pointer;
+        border: 0;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--accent), var(--green));
+        transition: transform 0.2s ease, opacity 0.2s ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.6;
+      }
+
+      .secondary {
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .danger {
+        background: rgba(239, 68, 68, 0.16);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        color: #fecaca;
+      }
+
+      .row-actions {
+        display: flex;
+        gap: 10px;
+      }
+
+      .row-actions button {
+        width: auto;
+        min-width: 86px;
+        padding: 9px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+      }
+
+      .result {
+        min-height: 26px;
+        margin-top: 14px;
+        font-family: "JetBrains Mono", Consolas, monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+
+      .lists {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 22px;
+        margin-top: 22px;
+      }
+
+      .list-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .list-head button {
+        width: auto;
+        padding: 9px 14px;
+        border-radius: 999px;
+      }
+
+      .model-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        padding: 14px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .model-row:first-of-type {
+        border-top: 0;
+      }
+
+      .key {
+        font-family: "JetBrains Mono", Consolas, monospace;
+        font-size: 12px;
+        color: #bfdbfe;
+        word-break: break-all;
+      }
+
+      .label {
+        margin-top: 4px;
+        font-weight: 800;
+      }
+
+      .path {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 8px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 800;
+        background: rgba(16, 185, 129, 0.14);
+        color: #86efac;
+      }
+
+      .badge.off {
+        background: rgba(148, 163, 184, 0.12);
+        color: #cbd5e1;
+      }
+
+      @media (max-width: 920px) {
+        .grid,
+        .lists {
+          grid-template-columns: 1fr;
+        }
+
+        .model-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>模型导入后门</h1>
+        <p>隐藏入口，不挂到主导航。导入成功后会写入配置并刷新当前进程内存，刷新对应页面即可看到新模型。</p>
+        <p class="hint">支持：SD LoRA <code>.safetensors</code>；风格迁移 AnimeGAN 兼容 <code>.onnx</code>。唯一 Key 用于 URL、配置和前端选择项，建议只用英文、数字、下划线。</p>
+      </section>
+
+      <section class="grid">
+        <form class="card" id="sd-form">
+          <h2>导入 SD LoRA</h2>
+          <label for="sd-key">唯一 Key</label>
+          <input id="sd-key" name="key" placeholder="例如 my_anime_lora" />
+          <label for="sd-label">显示名称</label>
+          <input id="sd-label" name="label" placeholder="例如 我的动漫 LoRA" />
+          <label for="sd-weight">默认权重</label>
+          <input id="sd-weight" name="weight" type="number" min="0" max="2" step="0.05" value="0.8" />
+          <label for="sd-base-model">绑定基础模型</label>
+          <select id="sd-base-model" name="base_model"></select>
+          <label for="sd-file">LoRA 文件</label>
+          <input id="sd-file" name="model_file" type="file" accept=".safetensors" required />
+          <button type="submit">导入到 SD 页面</button>
+          <div class="result" id="sd-result"></div>
+        </form>
+
+        <form class="card" id="style-form">
+          <h2>导入 AnimeGAN ONNX</h2>
+          <label for="style-key">唯一 Key</label>
+          <input id="style-key" name="key" placeholder="例如 my_shinkai_onnx" />
+          <label for="style-label">显示名称</label>
+          <input id="style-label" name="label" placeholder="例如 我的新海诚 ONNX" />
+          <label for="style-file">ONNX 文件</label>
+          <input id="style-file" name="model_file" type="file" accept=".onnx" required />
+          <button type="submit">导入到风格迁移页</button>
+          <div class="result" id="style-result"></div>
+        </form>
+
+        <form class="card" id="base-form">
+          <h2>导入 SD 基础模型</h2>
+          <label for="base-key">唯一 Key</label>
+          <input id="base-key" name="key" placeholder="例如 anime_base_v2" />
+          <label for="base-label">显示名称</label>
+          <input id="base-label" name="label" placeholder="例如 动漫基础模型 V2" />
+          <label for="base-config-dir">Diffusers 配置目录</label>
+          <input id="base-config-dir" name="config_dir" placeholder="默认使用 E:/models/sd_base_v1_5" />
+          <label for="base-steps">推荐步数</label>
+          <input id="base-steps" name="recommended_steps" type="number" min="1" max="150" value="30" />
+          <label for="base-cfg">推荐 CFG</label>
+          <input id="base-cfg" name="recommended_cfg" type="number" min="0" max="30" step="0.1" value="5.5" />
+          <label for="base-file">基础模型文件</label>
+          <input id="base-file" name="model_file" type="file" accept=".safetensors,.ckpt" required />
+          <label>
+            <input name="set_active" type="checkbox" checked style="width: auto; margin-right: 8px" />
+            导入后设为当前基础模型
+          </label>
+          <button type="submit">导入基础模型</button>
+          <div class="result" id="base-result"></div>
+        </form>
+      </section>
+
+      <section class="lists">
+        <div class="list-card">
+          <div class="list-head">
+            <div>
+              <h3>SD 风格</h3>
+              <div class="meta" id="sd-count">正在读取...</div>
+            </div>
+            <button class="secondary" type="button" onclick="refreshConfig()">刷新</button>
+          </div>
+          <div id="sd-list"></div>
+        </div>
+
+        <div class="list-card">
+          <div class="list-head">
+            <div>
+              <h3>风格迁移模型</h3>
+              <div class="meta" id="style-count">正在读取...</div>
+            </div>
+            <button class="secondary" type="button" onclick="refreshConfig()">刷新</button>
+          </div>
+          <div id="style-list"></div>
+        </div>
+
+        <div class="list-card">
+          <div class="list-head">
+            <div>
+              <h3>SD 基础模型</h3>
+              <div class="meta" id="base-count">正在读取...</div>
+            </div>
+            <button class="secondary" type="button" onclick="refreshConfig()">刷新</button>
+          </div>
+          <div id="base-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      function modelLabel(value, key) {
+        if (!value) return key;
+        if (typeof value === "string") return value;
+        return value.label || value.name || key;
+      }
+
+      function modelPath(value, adapters) {
+        if (!value || typeof value === "string") return "";
+        if (value.path) return value.path;
+        const adapter = (value.adapters || [])[0];
+        return adapter && adapters && adapters[adapter] ? adapters[adapter].default_path || "" : "";
+      }
+
+      function isDisabled(value) {
+        return Boolean(value && typeof value === "object" && value.disabled);
+      }
+
+      function refreshBaseSelect(baseEntries, activeBaseKey) {
+        const select = document.getElementById("sd-base-model");
+        select.innerHTML = baseEntries
+          .filter(([, value]) => !isDisabled(value))
+          .map(([key, value]) => `<option value="${key}">${modelLabel(value, key)}${key === activeBaseKey ? "（当前）" : ""}</option>`)
+          .join("");
+        select.value = activeBaseKey || "default";
+      }
+
+      async function postForm(url, payload) {
+        const form = new FormData();
+        Object.entries(payload).forEach(([key, value]) => form.append(key, value));
+        const res = await fetch(url, { method: "POST", body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.detail || data.error || "操作失败");
+        return data;
+      }
+
+      async function submitImport(form, url, resultId) {
+        const result = document.getElementById(resultId);
+        const button = form.querySelector("button");
+        button.disabled = true;
+        result.textContent = "正在导入并校验文件...";
+        try {
+          const res = await fetch(url, { method: "POST", body: new FormData(form) });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) throw new Error(data.detail || data.error || "导入失败");
+          result.textContent = `导入成功\nkey: ${data.key}\npath: ${data.path}`;
+          form.reset();
+          await refreshConfig();
+        } catch (error) {
+          result.textContent = `导入失败：${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      async function toggleModel(target, key, enabled) {
+        await postForm("/api/model-import/toggle", { target, key, enabled: String(enabled) });
+        await refreshConfig();
+      }
+
+      async function deleteModel(target, key) {
+        const deleteFile = window.confirm("是否同时删除 imported_models 目录中的模型文件？\n取消则只删除配置。");
+        await postForm("/api/model-import/delete", { target, key, delete_file: String(deleteFile) });
+        await refreshConfig();
+      }
+
+      async function setActiveBaseModel(key) {
+        await postForm("/api/model-import/sd-base-active", { key });
+        await refreshConfig();
+      }
+
+      function renderRows(container, entries, target, adapters, activeBaseKey) {
+        if (!entries.length) {
+          container.innerHTML = '<div class="meta">暂无模型。</div>';
+          return;
+        }
+        container.innerHTML = entries
+          .map(([key, value]) => {
+            const disabled = isDisabled(value);
+            const label = modelLabel(value, key);
+            const path = modelPath(value, adapters);
+            const active = target === "base" && key === activeBaseKey;
+            return `
+              <div class="model-row">
+                <div>
+                  <div class="key">${key}</div>
+                  <div class="label">${label}</div>
+                  ${path ? `<div class="path">${path}</div>` : ""}
+                  ${
+                    target === "sd" && value && typeof value === "object" && value.base_model
+                      ? `<div class="path">绑定基础模型：${value.base_model}</div>`
+                      : ""
+                  }
+                  <span class="badge ${disabled ? "off" : ""}">${disabled ? "已停用" : "已启用"}</span>
+                  ${active ? '<span class="badge">当前基础模型</span>' : ""}
+                </div>
+                <div class="row-actions">
+                  ${
+                    target === "base" && !active && !disabled
+                      ? `<button class="secondary" type="button" onclick="setActiveBaseModel('${key}')">设为当前</button>`
+                      : ""
+                  }
+                  <button class="secondary" type="button" onclick="toggleModel('${target}', '${key}', ${disabled})">${disabled ? "启用" : "停用"}</button>
+                  <button class="danger" type="button" onclick="deleteModel('${target}', '${key}')">删除</button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      async function refreshConfig() {
+        const res = await fetch("/api/model-import/config", { cache: "no-store" });
+        const data = await res.json();
+        const sdEntries = Object.entries(data.sd_styles || {});
+        const styleEntries = Object.entries(data.style_model_config || data.style_models || {});
+        const baseEntries = Object.entries(data.sd_base_models || {});
+        refreshBaseSelect(baseEntries, data.active_sd_base_model || "default");
+        document.getElementById("sd-count").textContent = `${sdEntries.length} 个配置 · ${data.import_dir}`;
+        document.getElementById("style-count").textContent = `${styleEntries.length} 个配置 · ${data.import_dir}`;
+        document.getElementById("base-count").textContent = `${baseEntries.length} 个配置 · 当前：${data.active_sd_base_model || "default"}`;
+        renderRows(document.getElementById("sd-list"), sdEntries, "sd", data.sd_adapters || {});
+        renderRows(document.getElementById("style-list"), styleEntries, "style", {});
+        renderRows(document.getElementById("base-list"), baseEntries, "base", {}, data.active_sd_base_model || "default");
+      }
+
+      document.getElementById("sd-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitImport(event.currentTarget, "/api/model-import/sd-lora", "sd-result");
+      });
+
+      document.getElementById("style-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitImport(event.currentTarget, "/api/model-import/style-onnx", "style-result");
+      });
+
+      document.getElementById("base-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitImport(event.currentTarget, "/api/model-import/sd-base", "base-result");
+      });
+
+      refreshConfig().catch((error) => {
+        document.getElementById("sd-count").textContent = error.message;
+        document.getElementById("style-count").textContent = error.message;
+        document.getElementById("base-count").textContent = error.message;
+      });
+    </script>
+  </body>
+</html>

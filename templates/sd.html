@@ -724,7 +724,17 @@
               <option value="{{ key }}">{{ name }}</option>
               {% endfor %}
             </select>
-            <p class="text-xs leading-5 text-slate-500">推荐使用 30 到 50 步，并结合重绘强度微调结果。</p>
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+                <span>基础模型</span>
+                <span id="sd-base-hint" class="mono text-[10px] text-slate-400">默认 SD1.5</span>
+              </div>
+              <select id="sd-base-select" class="w-full rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400">
+                <option value="default">快速 SD1.5（默认）</option>
+                <option value="style_bound">跟随当前 LoRA 绑定</option>
+              </select>
+            </div>
+            <p class="text-xs leading-5 text-slate-500">默认使用 SD1.5 走快速预览；XL LoRA 请切到“跟随当前 LoRA 绑定”或手动选择对应 XL 基础模型。</p>
           </section>
 
           <section class="sidebar-section space-y-3">

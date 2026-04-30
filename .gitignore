@@ -20,6 +20,7 @@ uploads/
 *.bin
 *.mat
 sd_base_v1_5/
+imported_models/
 
 # Local manual archives (optional)
 models_archive_*.zip

@@ -16,6 +16,7 @@ from safetensors.torch import load_file as load_safetensors_file
 from diffusers import (
     DPMSolverMultistepScheduler,
     StableDiffusionImg2ImgPipeline,
+    StableDiffusionXLImg2ImgPipeline,
 )
 
 
@@ -24,6 +25,19 @@ STYLE_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sd_styles.json
 
 def _load_style_config() -> dict[str, Any]:
     default = {
+        "active_base_model": "default",
+        "base_models": {
+            "default": {
+                "label": "Default MeinaMix / SD 1.5",
+                "type": "single_file",
+                "path": str(Path(__file__).resolve().parent / "MeinaMixV12.safetensors"),
+                "config_dir": str(Path(__file__).resolve().parent / "sd_base_v1_5"),
+                "recommended_steps": 30,
+                "recommended_cfg": 5.5,
+                "recommended_width": 768,
+                "recommended_height": 768,
+            }
+        },
         "styles": {
             "default": {"label": "两个 LoRA 都用（0.8 / 0.7）", "adapters": ["lora1", "lora2"], "weights": [0.8, 0.7]},
             "lora1": {"label": "水彩泼墨画", "adapters": ["lora1"], "weights": [1.0]},
@@ -50,8 +64,26 @@ def _load_style_config() -> dict[str, Any]:
 
 
 SD_STYLE_CONFIG = _load_style_config()
+SD_STYLE_CONFIG.setdefault("active_base_model", "default")
+SD_STYLE_CONFIG.setdefault(
+    "base_models",
+    {
+        "default": {
+            "label": "Default MeinaMix / SD 1.5",
+            "type": "single_file",
+            "path": str(Path(__file__).resolve().parent / "MeinaMixV12.safetensors"),
+            "config_dir": str(Path(__file__).resolve().parent / "sd_base_v1_5"),
+            "recommended_steps": 30,
+            "recommended_cfg": 5.5,
+            "recommended_width": 768,
+            "recommended_height": 768,
+        }
+    },
+)
 AVAILABLE_SD_STYLES: Dict[str, str] = {
-    k: str(v.get("label") or k) for k, v in (SD_STYLE_CONFIG.get("styles") or {}).items()
+    k: str(v.get("label") or k)
+    for k, v in (SD_STYLE_CONFIG.get("styles") or {}).items()
+    if isinstance(v, dict) and not bool(v.get("disabled"))
 }
 
 
@@ -60,7 +92,8 @@ def get_sd_style_config() -> dict[str, Any]:
 
 
 _PIPELINE_LOCK = threading.Lock()
-_PIPELINE: Optional[StableDiffusionImg2ImgPipeline] = None
+_PIPELINE: Optional[StableDiffusionImg2ImgPipeline | StableDiffusionXLImg2ImgPipeline] = None
+_PIPELINE_BASE_KEY: Optional[str] = None
 _TQDM_PATCHED = False
 _DIFFUSERS_TQDM_PATCHED = False
 _DIFFUSERS_PROGRESS_PATCHED = False
@@ -74,6 +107,127 @@ _WARMUP_STATUS: dict[str, Any] = {
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SD_SINGLE_FILE = BASE_DIR / "MeinaMixV12.safetensors"
 DEFAULT_SD_DIFFUSERS_DIR = BASE_DIR / "sd_base_v1_5"
+
+
+def get_active_base_model_key() -> str:
+    return str(SD_STYLE_CONFIG.get("active_base_model") or "default")
+
+
+def get_sd_base_models() -> dict[str, Any]:
+    base_models = SD_STYLE_CONFIG.setdefault("base_models", {})
+    if "default" not in base_models:
+        base_models["default"] = {
+            "label": "Default MeinaMix / SD 1.5",
+            "type": "single_file",
+            "path": str(DEFAULT_SD_SINGLE_FILE),
+            "config_dir": str(DEFAULT_SD_DIFFUSERS_DIR),
+            "recommended_steps": 30,
+            "recommended_cfg": 5.5,
+            "recommended_width": 768,
+            "recommended_height": 768,
+        }
+    return base_models
+
+
+def reset_pipeline() -> None:
+    global _PIPELINE, _PIPELINE_BASE_KEY
+    with _PIPELINE_LOCK:
+        _dispose_pipeline_unlocked()
+
+
+def _dispose_pipeline_unlocked() -> None:
+    global _PIPELINE, _PIPELINE_BASE_KEY
+    old = _PIPELINE
+    _PIPELINE = None
+    _PIPELINE_BASE_KEY = None
+    _WARMUP_STATUS["ready"] = False
+    if old is not None:
+        try:
+            old.to("cpu")
+        except Exception:
+            pass
+        try:
+            del old
+        except Exception:
+            pass
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+
+def _resolve_base_model_selection(
+    sd_style_name: Optional[str] = None,
+    base_model_key: Optional[str] = None,
+) -> tuple[str, str, Optional[str]]:
+    env_model = os.environ.get("SD_BASE_MODEL_ID_OR_PATH", "").strip()
+    if env_model:
+        env_config = os.environ.get("SD_BASE_DIFFUSERS_DIR", "").strip() or None
+        return "env", env_model, env_config
+
+    requested_base = str(base_model_key or "").strip()
+    base_models = get_sd_base_models()
+    style_bound_base = ""
+    if sd_style_name:
+        style_def = (SD_STYLE_CONFIG.get("styles") or {}).get(sd_style_name)
+        if isinstance(style_def, dict):
+            style_bound_base = str(style_def.get("base_model") or "").strip()
+
+    # Safety net: keep SD 1.5 as the UI default, but never try to load an SDXL
+    # LoRA into an SD 1.5 UNet. Browser cache or old recipes may still submit
+    # base_model=default, so the backend must correct XL-bound styles itself.
+    if requested_base in ("", "default") and style_bound_base:
+        bound_info = base_models.get(style_bound_base)
+        bound_type = str((bound_info or {}).get("model_type") or (bound_info or {}).get("type") or "").lower()
+        if "sdxl" in bound_type or "xl" in style_bound_base.lower():
+            requested_base = "style_bound"
+
+    base_key = requested_base or get_active_base_model_key()
+    if requested_base == "style_bound":
+        base_key = ""
+    if (not base_key or requested_base == "style_bound") and sd_style_name:
+        if style_bound_base:
+            base_key = style_bound_base
+    if not base_key:
+        base_key = "default"
+    info = base_models.get(base_key)
+    if not isinstance(info, dict) or bool(info.get("disabled")):
+        base_key = "default"
+        info = base_models.get("default") if isinstance(base_models.get("default"), dict) else {}
+
+    path_value = str((info or {}).get("path") or "").strip()
+    config_dir = str((info or {}).get("config_dir") or "").strip() or None
+    model_id_or_path = path_value or (str(DEFAULT_SD_SINGLE_FILE) if DEFAULT_SD_SINGLE_FILE.exists() else "runwayml/stable-diffusion-v1-5")
+    return base_key, model_id_or_path, config_dir
+
+
+def _base_model_info(base_key: str) -> dict[str, Any]:
+    info = get_sd_base_models().get(base_key)
+    return info if isinstance(info, dict) else {}
+
+
+def _looks_like_sdxl(model_id_or_path: str, base_key: str, config_dir: Optional[str]) -> bool:
+    info = _base_model_info(base_key)
+    model_type = str(info.get("model_type") or info.get("type") or "").lower()
+    if "sdxl" in model_type:
+        return True
+    candidates = []
+    p = Path(model_id_or_path)
+    if p.is_dir():
+        candidates.append(p / "model_index.json")
+    if config_dir:
+        candidates.append(Path(config_dir) / "model_index.json")
+    for index_path in candidates:
+        try:
+            if index_path.is_file():
+                data = json.loads(index_path.read_text(encoding="utf-8"))
+                class_name = str(data.get("_class_name") or "").lower()
+                if "xl" in class_name:
+                    return True
+        except Exception:
+            pass
+    return False
 
 
 def _get_device() -> torch.device:
@@ -233,26 +387,24 @@ def _resize_for_img2img(pil_img, max_side: int = 768, base: int = 64):
 
 def _load_pipeline_if_needed(
     phase_callback: Optional[Callable[[str, Optional[str]], None]] = None,
-) -> StableDiffusionImg2ImgPipeline:
-    global _PIPELINE
+    sd_style_name: Optional[str] = None,
+    base_model_key: Optional[str] = None,
+) -> StableDiffusionImg2ImgPipeline | StableDiffusionXLImg2ImgPipeline:
+    global _PIPELINE, _PIPELINE_BASE_KEY
     _patch_tqdm_stderr_once()
     _patch_diffusers_tqdm_once()
     _patch_diffusers_progress_bar_once()
-    if _PIPELINE is not None:
+    base_key, selected_model, selected_config_dir = _resolve_base_model_selection(sd_style_name, base_model_key)
+    if _PIPELINE is not None and _PIPELINE_BASE_KEY == base_key:
         return _PIPELINE
 
     with _PIPELINE_LOCK:
-        if _PIPELINE is not None:
+        if _PIPELINE is not None and _PIPELINE_BASE_KEY == base_key:
             return _PIPELINE
+        if _PIPELINE is not None and _PIPELINE_BASE_KEY != base_key:
+            _dispose_pipeline_unlocked()
 
-        env_model = os.environ.get("SD_BASE_MODEL_ID_OR_PATH", "").strip()
-        if env_model:
-            model_id_or_path = env_model
-        elif DEFAULT_SD_SINGLE_FILE.exists():
-            # 精简路径：优先本地单文件模型，减少 from_pretrained 组件拉取
-            model_id_or_path = str(DEFAULT_SD_SINGLE_FILE)
-        else:
-            model_id_or_path = "runwayml/stable-diffusion-v1-5"
+        model_id_or_path = selected_model
 
         allow_download = os.environ.get("SD_ALLOW_DOWNLOAD", "0").strip() == "1"
         is_single_file = isinstance(model_id_or_path, str) and (
@@ -282,6 +434,11 @@ def _load_pipeline_if_needed(
         device = _get_device()
         # 速度优先：CUDA 上使用 fp16，CPU 保持 fp32
         dtype = torch.float16 if device.type == "cuda" else torch.float32
+        pipeline_cls = (
+            StableDiffusionXLImg2ImgPipeline
+            if _looks_like_sdxl(model_id_or_path, base_key, selected_config_dir)
+            else StableDiffusionImg2ImgPipeline
+        )
 
         local_files_only = not allow_download
 
@@ -291,7 +448,7 @@ def _load_pipeline_if_needed(
         #
         # - 如果 SD_BASE_MODEL_ID_OR_PATH 指向 diffusers 格式目录，则直接 from_pretrained。
         if is_single_file:
-            local_diffusers_dir = os.environ.get("SD_BASE_DIFFUSERS_DIR", "").strip()
+            local_diffusers_dir = selected_config_dir or os.environ.get("SD_BASE_DIFFUSERS_DIR", "").strip()
             if not local_diffusers_dir:
                 if DEFAULT_SD_DIFFUSERS_DIR.exists():
                     local_diffusers_dir = str(DEFAULT_SD_DIFFUSERS_DIR)
@@ -306,7 +463,7 @@ def _load_pipeline_if_needed(
                 )
 
             try:
-                pipe = StableDiffusionImg2ImgPipeline.from_single_file(
+                pipe = pipeline_cls.from_single_file(
                     model_id_or_path,
                     config=local_diffusers_dir,
                     torch_dtype=dtype,
@@ -315,7 +472,7 @@ def _load_pipeline_if_needed(
                 )
             except TypeError:
                 # diffusers 版本对参数名有差异时兜底
-                pipe = StableDiffusionImg2ImgPipeline.from_single_file(
+                pipe = pipeline_cls.from_single_file(
                     model_id_or_path,
                     config=local_diffusers_dir,
                     torch_dtype=dtype,
@@ -324,14 +481,14 @@ def _load_pipeline_if_needed(
         else:
             # diffusers 不同版本对 from_pretrained 的参数兼容性略有差异，这里做保护性处理。
             try:
-                pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+                pipe = pipeline_cls.from_pretrained(
                     model_id_or_path,
                     torch_dtype=dtype,
                     safety_checker=None,  # 关闭安全检查，避免额外开销/依赖
                     local_files_only=local_files_only,
                 )
             except TypeError:
-                pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+                pipe = pipeline_cls.from_pretrained(
                     model_id_or_path,
                     torch_dtype=dtype,
                 )
@@ -355,6 +512,14 @@ def _load_pipeline_if_needed(
             pipe.safety_checker = None
         if hasattr(pipe, "requires_safety_checker"):
             pipe.requires_safety_checker = False
+        if pipeline_cls is StableDiffusionXLImg2ImgPipeline and hasattr(pipe, "vae"):
+            # Let the SDXL pipeline upcast the VAE only during encode/decode.
+            # Moving the VAE module to fp32 directly can create half/float bias
+            # mismatches in img2img.
+            try:
+                pipe.vae.config.force_upcast = True
+            except Exception:
+                pass
         # 关闭/重定向 diffusers 进度条输出，避免某些终端环境触发 stderr Invalid argument
         global _SAFE_PROGRESS_FILE
         if _SAFE_PROGRESS_FILE is None:
@@ -379,6 +544,7 @@ def _load_pipeline_if_needed(
             pass
         pipe.to(device)
         _PIPELINE = pipe
+        _PIPELINE_BASE_KEY = base_key
         return pipe
 
 
@@ -419,6 +585,7 @@ def warmup_pipeline() -> dict[str, Any]:
 def run_sd_style_transfer(
     *,
     sd_style_name: str,
+    base_model_key: Optional[str] = None,
     content_path: Path,
     output_path: Path,
     denoising_strength: float,
@@ -464,13 +631,25 @@ def run_sd_style_transfer(
         try:
             pipe_obj.load_lora_weights(str(lora_path), **kwargs)
             return
-        except KeyError:
+        except (KeyError, AttributeError) as exc:
             # 回退：过滤掉 text encoder 相关键，保留 UNet 相关键再加载。
             raw_state = load_safetensors_file(str(lora_path))
-            unet_only = {k: v for k, v in raw_state.items() if k.startswith("lora_unet_")}
+            unet_only = {
+                k: v
+                for k, v in raw_state.items()
+                if k.startswith("lora_unet_")
+                and "down_blocks_0_attentions" not in k
+            }
             if not unet_only:
-                raise
-            pipe_obj.load_lora_weights(unet_only, **kwargs)
+                raise RuntimeError(
+                    f"LoRA 与当前基础模型不兼容，且没有可加载的 UNet 权重: {lora_path}"
+                ) from exc
+            try:
+                pipe_obj.load_lora_weights(unet_only, **kwargs)
+            except Exception as retry_exc:
+                raise RuntimeError(
+                    f"LoRA 与当前基础模型结构不兼容，请更换绑定的基础模型或 LoRA: {lora_path}"
+                ) from retry_exc
 
     # 强制在推理入口执行一次补丁（不依赖 pipeline 初始化路径）
     sys.stderr = _SafeStderr(sys.stderr)
@@ -478,28 +657,13 @@ def run_sd_style_transfer(
     _patch_diffusers_tqdm_once()
     _patch_diffusers_progress_bar_once()
 
-    pipe = _load_pipeline_if_needed(phase_callback=_ph)
+    pipe = _load_pipeline_if_needed(
+        phase_callback=_ph,
+        sd_style_name=sd_style_name,
+        base_model_key=base_model_key,
+    )
     _ph("running", "LoRA 与 img2img 采样中（步进进度见下方）…")
 
-    adapter_cfg = SD_STYLE_CONFIG.get("adapters") or {}
-    adapter_to_file: dict[str, Path] = {}
-    for adapter_name, cfg in adapter_cfg.items():
-        env_key = str(cfg.get("env") or "").strip()
-        default_path = str(cfg.get("default_path") or "").strip()
-        resolved = (os.environ.get(env_key, default_path) if env_key else default_path).strip()
-        if resolved:
-            adapter_to_file[adapter_name] = Path(resolved)
-
-    # 只加载一次 LoRA（每次 set_adapters 只切换权重）
-    # diffusers 的 LoRA 在内部是以 adapter_name 注册的，我们固定命名。
-    with _PIPELINE_LOCK:
-        # 避免重复 load：通过在模型上挂一个标记判断
-        if not getattr(pipe, "_lora_loaded", False):
-            # 仅加载存在的 LoRA，避免本地文件不全时阻塞所有风格。
-            for aname, apath in adapter_to_file.items():
-                if apath.exists():
-                    _safe_load_lora_weights(pipe, apath, adapter_name=aname)
-            setattr(pipe, "_lora_loaded", True)
 
     from PIL import Image
 
@@ -543,10 +707,34 @@ def run_sd_style_transfer(
     adapter_weights = [float(x) for x in (style_def.get("weights") or [])]
     if not adapters or len(adapters) != len(adapter_weights):
         raise RuntimeError(f"风格配置无效：{sd_style_name}")
+
+    adapter_cfg = SD_STYLE_CONFIG.get("adapters") or {}
+    adapter_to_file = {}
+    for adapter_name in adapters:
+        cfg = adapter_cfg.get(adapter_name) or {}
+        env_key = str(cfg.get("env") or "").strip()
+        default_path = str(cfg.get("default_path") or "").strip()
+        resolved = (os.environ.get(env_key, default_path) if env_key else default_path).strip()
+        if resolved:
+            adapter_to_file[adapter_name] = Path(resolved)
+
     missing_files = [a for a in adapters if a not in adapter_to_file or not adapter_to_file[a].exists()]
     if missing_files:
-        missing_info = ", ".join(f"{a} -> {adapter_to_file[a]}" for a in missing_files)
+        missing_info = ", ".join(f"{a} -> {adapter_to_file.get(a)}" for a in missing_files)
         raise FileNotFoundError(f"所选风格缺少 LoRA 文件：{missing_info}")
+
+    lora_load_key = tuple((a, str(adapter_to_file[a])) for a in adapters)
+    with _PIPELINE_LOCK:
+        if getattr(pipe, "_lora_loaded_key", None) != lora_load_key:
+            if hasattr(pipe, "unload_lora_weights"):
+                try:
+                    pipe.unload_lora_weights()
+                except Exception:
+                    pass
+            for aname in adapters:
+                _safe_load_lora_weights(pipe, adapter_to_file[aname], adapter_name=aname)
+            setattr(pipe, "_lora_loaded", True)
+            setattr(pipe, "_lora_loaded_key", lora_load_key)
 
     def _run_pipe_once(callback_fn=None):
         # 兜底：某些 Windows 终端环境下 tqdm 会对 stderr.flush() 抛 Errno 22
@@ -648,4 +836,3 @@ def run_sd_style_transfer_candidates(
         run_sd_style_transfer(output_path=p, denoising_strength=denoise_i, **kwargs)
         paths.append(p)
     return paths
-

@@ -17,6 +17,24 @@ from torchvision import models
 MODEL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "style_models.json"
 
 
+def _load_model_config() -> Dict[str, object]:
+    try:
+        if MODEL_CONFIG_PATH.is_file():
+            data = json.loads(MODEL_CONFIG_PATH.read_text(encoding="utf-8"))
+            m = data.get("models") if isinstance(data, dict) else None
+            if isinstance(m, dict) and m:
+                return {str(k): v for k, v in m.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _model_label(value: object) -> str:
+    if isinstance(value, dict):
+        return str(value.get("label") or value.get("name") or "")
+    return str(value)
+
+
 def _load_model_labels() -> Dict[str, str]:
     fallback = {
         "animegan_shinkai": "AnimeGANv2 新海诚风格 (ONNX)",
@@ -28,17 +46,37 @@ def _load_model_labels() -> Dict[str, str]:
         "vgg19_neural_style": "VGG19 经典风格迁移（迭代优化）",
     }
     try:
-        if MODEL_CONFIG_PATH.is_file():
-            data = json.loads(MODEL_CONFIG_PATH.read_text(encoding="utf-8"))
-            m = data.get("models")
-            if isinstance(m, dict) and m:
-                return {str(k): str(v) for k, v in m.items()}
+        m = _load_model_config()
+        if m:
+            return {
+                str(k): _model_label(v)
+                for k, v in m.items()
+                if not (isinstance(v, dict) and bool(v.get("disabled")))
+            }
     except Exception:
         pass
     return fallback
 
 
 AVAILABLE_MODELS: Dict[str, str] = _load_model_labels()
+
+
+def _model_info(model_name: str) -> Dict[str, object]:
+    value = _load_model_config().get(model_name)
+    return value if isinstance(value, dict) else {}
+
+
+def _resolve_model_path(path_value: object) -> Path:
+    p = Path(str(path_value or ""))
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parent / p
+    return p
+
+
+def _is_animegan_onnx_model(model_name: str) -> bool:
+    if model_name in {"animegan_shinkai", "animegan_hayao"}:
+        return True
+    return str(_model_info(model_name).get("type") or "") == "animegan_onnx"
 
 
 def get_device() -> torch.device:
@@ -71,18 +109,20 @@ def load_model(model_name: str) -> Union[torch.nn.Module, ort.InferenceSession]:
         "animegan_shinkai_face",
         "animegan_hayao",
         "animegan_hayao_face",
-    }:
+    } or str(_model_info(model_name).get("type") or "") == "animegan_onnx":
         onnx_by_name = {
             "animegan_shinkai": "Shinkai_53.onnx",
             "animegan_shinkai_face": "Shinkai_53.onnx",
             "animegan_hayao": "AnimeGANv2_Hayao.onnx",
             "animegan_hayao_face": "AnimeGANv2_Hayao.onnx",
         }
-        onnx_file = onnx_by_name[model_name]
-        if not Path(onnx_file).exists():
+        info = _model_info(model_name)
+        onnx_file = info.get("path") or onnx_by_name.get(model_name)
+        onnx_path = _resolve_model_path(onnx_file)
+        if not onnx_path.exists():
             raise FileNotFoundError(f"找不到 ONNX 模型文件: {onnx_file}")
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        session = ort.InferenceSession(onnx_file, providers=providers)
+        session = ort.InferenceSession(str(onnx_path), providers=providers)
         return session
 
     # 这些 state_dict 的键名结构与 ResNet generator 一致
@@ -302,7 +342,7 @@ def run_style_transfer(
         return images
 
     # 1) AnimeGANv2 ONNX 模型
-    if model_name in {"animegan_shinkai", "animegan_hayao"}:
+    if _is_animegan_onnx_model(model_name):
         progress_callback(5)
         # 读取原图（BGR）
         bgr = cv2.imread(str(content_path))

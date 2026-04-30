@@ -32,6 +32,8 @@ const guidanceInput = document.getElementById("guidance-input");
 const guidanceValue = document.getElementById("guidance-value");
 const quickModeInput = document.getElementById("quick-mode-input");
 const sdStyleSelect = document.getElementById("sd-style-select");
+const sdBaseSelect = document.getElementById("sd-base-select");
+const sdBaseHint = document.getElementById("sd-base-hint");
 const promptInput = document.getElementById("prompt-input");
 const negativePromptInput = document.getElementById("negative-prompt-input");
 const positivePresetSelect = document.getElementById("positive-preset-select");
@@ -67,6 +69,7 @@ let genCtx = null;
 let genFrame = null;
 let genParticles = [];
 let genProgress = 0;
+let sdPluginConfig = { styles: {}, baseModels: {}, activeBaseModel: "default" };
 
 const PHASE_LABELS = {
   pending: "排队",
@@ -76,6 +79,93 @@ const PHASE_LABELS = {
   done: "完成",
   error: "出错",
 };
+
+function baseModelLabel(key) {
+  const info = sdPluginConfig.baseModels && sdPluginConfig.baseModels[key];
+  return (info && (info.label || info.path || key)) || key || "default";
+}
+
+function currentStyleBoundBase() {
+  const styleKey = sdStyleSelect ? sdStyleSelect.value : "";
+  const style = sdPluginConfig.styles && sdPluginConfig.styles[styleKey];
+  return style && style.base_model ? String(style.base_model) : "";
+}
+
+function updateBaseModelHint() {
+  if (!sdBaseHint) return;
+  const selected = sdBaseSelect ? sdBaseSelect.value : "default";
+  const bound = currentStyleBoundBase();
+  if (selected === "style_bound") {
+    sdBaseHint.textContent = bound ? `LoRA 绑定：${baseModelLabel(bound)}` : "当前 LoRA 未绑定，回退 SD1.5";
+  } else {
+    sdBaseHint.textContent = selected === "default" ? "默认 SD1.5" : baseModelLabel(selected);
+    if (bound && selected !== bound) sdBaseHint.textContent += ` / LoRA 建议：${baseModelLabel(bound)}`;
+  }
+}
+
+function isLikelyXlBase(baseKey) {
+  const info = sdPluginConfig.baseModels && sdPluginConfig.baseModels[baseKey];
+  const text = `${baseKey || ""} ${info && info.label ? info.label : ""} ${info && info.model_type ? info.model_type : ""} ${info && info.type ? info.type : ""}`.toLowerCase();
+  return text.includes("xl") || text.includes("sdxl");
+}
+
+function syncBaseModelForStyle() {
+  if (!sdBaseSelect) return;
+  const bound = currentStyleBoundBase();
+  if (bound && isLikelyXlBase(bound) && sdBaseSelect.value === "default") {
+    sdBaseSelect.value = "style_bound";
+    if (statusText) statusText.textContent = `当前 LoRA 需要 XL 基础模型，已自动切换为「跟随当前 LoRA 绑定」`;
+  }
+  updateBaseModelHint();
+}
+
+function populateBaseModelSelect() {
+  if (!sdBaseSelect) return;
+  const previous = sdBaseSelect.value || "default";
+  sdBaseSelect.innerHTML = "";
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "default";
+  defaultOption.textContent = "快速 SD1.5（默认）";
+  sdBaseSelect.appendChild(defaultOption);
+
+  const boundOption = document.createElement("option");
+  boundOption.value = "style_bound";
+  boundOption.textContent = "跟随当前 LoRA 绑定";
+  sdBaseSelect.appendChild(boundOption);
+
+  const entries = Object.entries(sdPluginConfig.baseModels || {});
+  entries
+    .filter(([key]) => key !== "default")
+    .forEach(([key, info]) => {
+      if (info && info.disabled) return;
+      const opt = document.createElement("option");
+      opt.value = key;
+      const type = String((info && (info.model_type || info.type)) || "").toUpperCase();
+      opt.textContent = `${info && info.label ? info.label : key}${type ? ` · ${type}` : ""}`;
+      sdBaseSelect.appendChild(opt);
+    });
+
+  sdBaseSelect.value = Array.from(sdBaseSelect.options).some((o) => o.value === previous) ? previous : "default";
+  syncBaseModelForStyle();
+}
+
+async function loadSdPluginConfig() {
+  try {
+    const resp = await fetch("/api/plugins/sd-styles", { cache: "no-store" });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    sdPluginConfig = {
+      styles: data.styles || {},
+      baseModels: data.base_models || {},
+      activeBaseModel: data.active_base_model || "default",
+    };
+    populateBaseModelSelect();
+  } catch (e) {
+    console.warn("加载 SD 模型配置失败", e);
+    updateBaseModelHint();
+  }
+}
 
 function nextPollMs() {
   return typeof ClientHelpers !== "undefined" && ClientHelpers.pollDelayMs ? ClientHelpers.pollDelayMs() : 700;
@@ -340,6 +430,7 @@ function randomizeSdParams() {
     const opts = Array.from(sdStyleSelect.options);
     const pick = opts[Math.floor(Math.random() * opts.length)];
     sdStyleSelect.value = pick.value;
+    syncBaseModelForStyle();
   }
   if (denoiseInput) {
     const min = Number.parseFloat(denoiseInput.min);
@@ -388,6 +479,7 @@ async function copySdRecipe() {
     page: "sd-img2img",
     sdStyle,
     sdStyleLabel,
+    baseModel: sdBaseSelect ? sdBaseSelect.value : "default",
     denoise: denoiseInput ? Number.parseFloat(denoiseInput.value) : null,
     steps: stepsInput ? Number.parseInt(stepsInput.value, 10) : null,
     guidance: guidanceInput ? Number.parseFloat(guidanceInput.value) : null,
@@ -443,6 +535,7 @@ async function pasteSdRecipe() {
   applySdEntry({
     type: "sd",
     sdStyle: styleKey,
+    baseModel: obj.baseModel || obj.base_model,
     denoise: obj.denoise,
     steps: obj.steps,
     guidance: obj.guidance,
@@ -484,6 +577,7 @@ function recordSdHistoryJob(jobId) {
     jobId,
     at: Date.now(),
     sdStyle: sdStyleSelect ? sdStyleSelect.value : "default",
+    baseModel: sdBaseSelect ? sdBaseSelect.value : "default",
     denoise: denoiseInput ? Number.parseFloat(denoiseInput.value) : 0.5,
     steps: stepsInput ? Number.parseInt(stepsInput.value, 10) : 30,
     guidance: guidanceInput ? Number.parseFloat(guidanceInput.value) : 7,
@@ -515,7 +609,10 @@ async function analyzeInputAndSuggest() {
 function applySuggestion() {
   if (!latestAnalyzeSuggestion) return;
   const r = latestAnalyzeSuggestion.recommended || {};
-  if (sdStyleSelect) sdStyleSelect.value = latestAnalyzeSuggestion.style_suggestion || sdStyleSelect.value;
+  if (sdStyleSelect) {
+    sdStyleSelect.value = latestAnalyzeSuggestion.style_suggestion || sdStyleSelect.value;
+    syncBaseModelForStyle();
+  }
   if (stepsInput && r.steps != null) {
     stepsInput.value = String(r.steps);
     syncRangeUI(stepsInput, stepsValue, 0);
@@ -1255,6 +1352,7 @@ async function submitQueueSdJob() {
   const formData = new FormData();
   formData.append("content_image", contentFile);
   formData.append("sd_style_name", sdStyleSelect ? sdStyleSelect.value : "default");
+  formData.append("base_model", sdBaseSelect ? sdBaseSelect.value : "default");
   formData.append("denoising_strength", denoiseInput ? denoiseInput.value : "0.65");
   formData.append("guidance_scale", guidanceInput ? guidanceInput.value : "5.5");
   formData.append("num_inference_steps", stepsInput ? stepsInput.value : "30");
@@ -1475,6 +1573,10 @@ async function rerunJob(oldJobId) {
 function applySdEntry(entry) {
   if (!entry || entry.type !== "sd") return;
   if (sdStyleSelect && entry.sdStyle) sdStyleSelect.value = entry.sdStyle;
+  if (sdBaseSelect && entry.baseModel) {
+    const found = Array.from(sdBaseSelect.options).some((o) => o.value === entry.baseModel);
+    sdBaseSelect.value = found ? entry.baseModel : "default";
+  }
   if (denoiseInput && entry.denoise != null) {
     denoiseInput.value = String(entry.denoise);
     syncRangeUI(denoiseInput, denoiseValue, 2);
@@ -1490,6 +1592,7 @@ function applySdEntry(entry) {
   if (quickModeInput) quickModeInput.checked = !!entry.quick;
   if (promptInput && entry.prompt != null) promptInput.value = entry.prompt;
   if (negativePromptInput && entry.negative != null) negativePromptInput.value = entry.negative;
+  syncBaseModelForStyle();
 }
 
 function consumeHistoryApplySd() {
@@ -1533,7 +1636,13 @@ if (buildShareCardBtn) buildShareCardBtn.addEventListener("click", () => void bu
 if (buildXhsCoverBtn) buildXhsCoverBtn.addEventListener("click", () => void buildShare("xiaohongshu").catch((e) => alert(e.message)));
 if (buildDyCoverBtn) buildDyCoverBtn.addEventListener("click", () => void buildShare("douyin").catch((e) => alert(e.message)));
 if (sdStyleSelect) {
-  sdStyleSelect.addEventListener("change", () => applyStyleRecommendation(sdStyleSelect.value));
+  sdStyleSelect.addEventListener("change", () => {
+    applyStyleRecommendation(sdStyleSelect.value);
+    syncBaseModelForStyle();
+  });
+}
+if (sdBaseSelect) {
+  sdBaseSelect.addEventListener("change", updateBaseModelHint);
 }
 
 const sdRandomParamsBtn = document.getElementById("sd-random-params-btn");
@@ -1582,6 +1691,9 @@ document.querySelectorAll(".scene-preset-card").forEach((btn) => {
   btn.addEventListener("click", () => applyScenePreset(btn.dataset.scene || ""));
 });
 
-consumeHistoryApplySd();
-consumeHistoryPreviewSd();
-if (sdStyleSelect) applyStyleRecommendation(sdStyleSelect.value);
+void loadSdPluginConfig().finally(() => {
+  consumeHistoryApplySd();
+  consumeHistoryPreviewSd();
+  if (sdStyleSelect) applyStyleRecommendation(sdStyleSelect.value);
+  syncBaseModelForStyle();
+});
