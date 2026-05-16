@@ -8,6 +8,16 @@ __pycache__/
 results/
 uploads/
 data/*.local.json
+data/jobs.db
+*.log
+software_test_render/
+tmp_cloud_test/
+
+# Generated thesis / coursework artifacts
+*.docx
+*.pdf
+build_thesis_docx.py
+build_software_test_docx.py
 
 # Editor / tooling
 .cursor/
