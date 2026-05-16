@@ -140,19 +140,6 @@
         color: #fecaca;
       }
 
-      .row-actions {
-        display: flex;
-        gap: 10px;
-      }
-
-      .row-actions button {
-        width: auto;
-        min-width: 86px;
-        padding: 9px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-      }
-
       .result {
         min-height: 26px;
         margin-top: 14px;
@@ -163,7 +150,7 @@
 
       .lists {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: 1fr 1fr 1.15fr;
         gap: 22px;
         margin-top: 22px;
       }
@@ -184,9 +171,9 @@
 
       .model-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 16px;
-        padding: 14px 0;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+        padding: 16px 0;
         border-top: 1px solid var(--line);
       }
 
@@ -198,19 +185,26 @@
         font-family: "JetBrains Mono", Consolas, monospace;
         font-size: 12px;
         color: #bfdbfe;
-        word-break: break-all;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .label {
         margin-top: 4px;
         font-weight: 800;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
       }
 
       .path {
         margin-top: 6px;
         color: var(--muted);
         font-size: 12px;
-        word-break: break-all;
+        line-height: 1.45;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .badge {
@@ -230,14 +224,34 @@
         color: #cbd5e1;
       }
 
+      .badge + .badge {
+        margin-left: 6px;
+      }
+
+      .row-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .row-actions button {
+        width: 100%;
+        min-width: 0;
+        min-height: 34px;
+        padding: 7px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        line-height: 1;
+      }
+
       @media (max-width: 920px) {
         .grid,
         .lists {
           grid-template-columns: 1fr;
         }
 
-        .model-row {
-          grid-template-columns: 1fr;
+        .row-actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
       }
     </style>
@@ -409,6 +423,15 @@
         await refreshConfig();
       }
 
+      async function uploadCloudModel(target, key) {
+        const ok = window.confirm(`开始同步 ${target === "base" ? "基础模型" : "LoRA"}「${key}」到云端？\n已有文件会自动跳过，缺失文件会断点续传。`);
+        if (!ok) return;
+        const res = await fetch("/api/cloud-upload/start", { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.detail || data.error || "启动云端上传失败");
+        window.location.href = "/cloud-upload-monitor";
+      }
+
       function renderRows(container, entries, target, adapters, activeBaseKey) {
         if (!entries.length) {
           container.innerHTML = '<div class="meta">暂无模型。</div>';
@@ -420,6 +443,7 @@
             const label = modelLabel(value, key);
             const path = modelPath(value, adapters);
             const active = target === "base" && key === activeBaseKey;
+            const safeKey = String(key).replace(/'/g, "\\'");
             return `
               <div class="model-row">
                 <div>
@@ -437,11 +461,16 @@
                 <div class="row-actions">
                   ${
                     target === "base" && !active && !disabled
-                      ? `<button class="secondary" type="button" onclick="setActiveBaseModel('${key}')">设为当前</button>`
+                      ? `<button class="secondary" type="button" onclick="setActiveBaseModel('${safeKey}')">设为当前</button>`
                       : ""
                   }
-                  <button class="secondary" type="button" onclick="toggleModel('${target}', '${key}', ${disabled})">${disabled ? "启用" : "停用"}</button>
-                  <button class="danger" type="button" onclick="deleteModel('${target}', '${key}')">删除</button>
+                  ${
+                    (target === "base" || target === "sd") && !disabled
+                      ? `<button class="secondary" type="button" onclick="uploadCloudModel('${target}', '${safeKey}')">上传云端</button>`
+                      : ""
+                  }
+                  <button class="secondary" type="button" onclick="toggleModel('${target}', '${safeKey}', ${disabled})">${disabled ? "启用" : "停用"}</button>
+                  <button class="danger" type="button" onclick="deleteModel('${target}', '${safeKey}')">删除</button>
                 </div>
               </div>
             `;

@@ -68,6 +68,24 @@ function goViewResult(entry) {
   smoothNavigate(normalizeType(entry.type) === "sd" ? "/sd" : "/");
 }
 
+async function goRerun(entry) {
+  if (!entry || !entry.jobId) return;
+  if (normalizeType(entry.type) !== "sd") {
+    alert("当前只支持从本地记录一键重跑 SD 重绘任务。");
+    return;
+  }
+  try {
+    const response = await fetch(`/api/rerun/${encodeURIComponent(entry.jobId)}`, { method: "POST" });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || "重跑失败");
+    sessionStorage.setItem("historyPoll", JSON.stringify({ jobId: data.job_id, type: "sd" }));
+    smoothNavigate("/sd");
+  } catch (error) {
+    console.error(error);
+    alert(`重跑失败：${error && error.message ? error.message : "未知错误"}`);
+  }
+}
+
 function smoothNavigate(url) {
   if (!url) return;
   if (document.body.classList.contains("is-page-leaving")) return;
@@ -130,6 +148,7 @@ function buildHistoryItem(entry) {
     <div class="history-card-actions">
       <button type="button" class="history-action ghost action-apply">复用参数</button>
       <button type="button" class="history-action primary action-view">查看结果</button>
+      ${entry.jobId && normalizeType(entry.type) === "sd" ? `<button type="button" class="history-action ghost action-rerun">重跑</button>` : ""}
       ${entry.jobId ? `<a class="history-action ghost" href="${downloadUrlForJob(entry.jobId, normalizeType(entry.type) === "sd" ? "sd-result" : "style-result")}">下载结果</a>` : ""}
     </div>
     <div class="history-card-glint" aria-hidden="true"></div>
@@ -145,6 +164,7 @@ function buildHistoryItem(entry) {
 
   node.querySelector(".action-apply")?.addEventListener("click", () => goApply(entry));
   node.querySelector(".action-view")?.addEventListener("click", () => goViewResult(entry));
+  node.querySelector(".action-rerun")?.addEventListener("click", () => void goRerun(entry));
 
   node.addEventListener("mouseenter", () => {
     if (!glint) return;

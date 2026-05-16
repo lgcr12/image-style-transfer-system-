@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>云端模型上传监控</title>
+    <style>
+      :root {
+        --bg: #08111f;
+        --panel: rgba(15, 23, 42, 0.74);
+        --panel-strong: rgba(15, 23, 42, 0.92);
+        --line: rgba(148, 163, 184, 0.22);
+        --text: #e5eefc;
+        --muted: #94a3b8;
+        --blue: #38bdf8;
+        --green: #34d399;
+        --yellow: #fbbf24;
+        --red: #fb7185;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+        background:
+          radial-gradient(circle at 18% 12%, rgba(56, 189, 248, 0.22), transparent 34%),
+          radial-gradient(circle at 82% 10%, rgba(52, 211, 153, 0.16), transparent 30%),
+          linear-gradient(135deg, #020617, var(--bg));
+      }
+
+      .shell {
+        width: min(1280px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 42px 0 60px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 28px;
+      }
+
+      .kicker {
+        margin: 0 0 8px;
+        color: var(--blue);
+        font: 700 12px/1 "JetBrains Mono", Consolas, monospace;
+        letter-spacing: 0.22em;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(30px, 4vw, 52px);
+        line-height: 1;
+        letter-spacing: -0.06em;
+      }
+
+      .desc {
+        margin: 14px 0 0;
+        max-width: 680px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      button,
+      .link-btn {
+        min-height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0 18px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+        font-weight: 800;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+      }
+
+      button:hover,
+      .link-btn:hover {
+        transform: translateY(-1px);
+        border-color: rgba(56, 189, 248, 0.6);
+        background: rgba(56, 189, 248, 0.12);
+      }
+
+      .primary {
+        border: none;
+        color: #031525;
+        background: linear-gradient(135deg, var(--blue), var(--green));
+        box-shadow: 0 18px 42px rgba(56, 189, 248, 0.22);
+      }
+
+      .danger:hover {
+        border-color: rgba(251, 113, 133, 0.8);
+        background: rgba(251, 113, 133, 0.14);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 18px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 22px;
+        background: var(--panel);
+        backdrop-filter: blur(20px) saturate(140%);
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.26);
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+
+      .metric strong {
+        font: 800 22px/1 "JetBrains Mono", Consolas, monospace;
+      }
+
+      .progress {
+        height: 13px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(148, 163, 184, 0.18);
+      }
+
+      .bar {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--blue), var(--green));
+        transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .section-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 14px;
+      }
+
+      .section-title h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .status-pill {
+        border-radius: 999px;
+        padding: 6px 10px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.06);
+        font: 700 12px/1 "JetBrains Mono", Consolas, monospace;
+      }
+
+      .status-pill.running {
+        color: var(--green);
+        background: rgba(52, 211, 153, 0.12);
+      }
+
+      .file-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .file {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(2, 6, 23, 0.34);
+      }
+
+      .file-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 10px;
+      }
+
+      .file-name {
+        font-weight: 800;
+      }
+
+      .file-meta {
+        color: var(--muted);
+        font: 700 12px/1.4 "JetBrains Mono", Consolas, monospace;
+        white-space: nowrap;
+      }
+
+      .log {
+        height: 340px;
+        overflow: auto;
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(2, 6, 23, 0.56);
+        color: #cbd5e1;
+        font: 12px/1.7 "JetBrains Mono", Consolas, monospace;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .error {
+        color: var(--red);
+      }
+
+      @media (max-width: 980px) {
+        .topbar,
+        .grid {
+          grid-template-columns: 1fr;
+          display: grid;
+        }
+
+        .metric-row {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="kicker">CLOUD MODEL SYNC</p>
+          <h1>云端模型上传监控</h1>
+          <p class="desc">
+            实时读取远端 ComfyUI 模型目录，并可从本地断点续传模型。页面不会暴露 SSH 密码，连接信息只由后端读取。
+          </p>
+        </div>
+        <div class="actions">
+          <a class="link-btn" href="/sd">返回 SD</a>
+          <button id="refresh-btn">刷新</button>
+          <button id="start-btn" class="primary">继续上传</button>
+          <button id="stop-btn" class="danger">暂停上传</button>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="section-title">
+          <h2>总进度</h2>
+          <span id="run-state" class="status-pill">读取中</span>
+        </div>
+        <div class="metric-row">
+          <div class="metric"><span>远端完成</span><strong id="overall-percent">--%</strong></div>
+          <div class="metric"><span>已上传</span><strong id="overall-size">--</strong></div>
+          <div class="metric"><span>当前速度</span><strong id="speed">--</strong></div>
+          <div class="metric"><span>剩余时间</span><strong id="eta">--</strong></div>
+        </div>
+        <div class="progress"><div id="overall-bar" class="bar"></div></div>
+        <p id="message" class="muted">正在连接后端...</p>
+      </section>
+
+      <div class="grid" style="margin-top: 18px">
+        <section class="card">
+          <div class="section-title">
+            <h2>文件队列</h2>
+            <span id="disk" class="status-pill">磁盘 --</span>
+          </div>
+          <div id="file-list" class="file-list"></div>
+        </section>
+
+        <aside class="card">
+          <div class="section-title">
+            <h2>实时日志</h2>
+            <span id="updated" class="status-pill">--</span>
+          </div>
+          <div id="log" class="log"></div>
+        </aside>
+      </div>
+    </main>
+
+    <script>
+      const els = {
+        runState: document.getElementById("run-state"),
+        overallPercent: document.getElementById("overall-percent"),
+        overallSize: document.getElementById("overall-size"),
+        speed: document.getElementById("speed"),
+        eta: document.getElementById("eta"),
+        overallBar: document.getElementById("overall-bar"),
+        message: document.getElementById("message"),
+        fileList: document.getElementById("file-list"),
+        log: document.getElementById("log"),
+        disk: document.getElementById("disk"),
+        updated: document.getElementById("updated"),
+      };
+
+      function humanBytes(value) {
+        let size = Number(value || 0);
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        for (const unit of units) {
+          if (size < 1024 || unit === "TB") return unit === "B" ? `${Math.round(size)}B` : `${size.toFixed(1)}${unit}`;
+          size /= 1024;
+        }
+        return `${size.toFixed(1)}TB`;
+      }
+
+      function humanEta(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return "--";
+        if (seconds < 60) return `${Math.ceil(seconds)}s`;
+        if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`;
+        return `${(seconds / 3600).toFixed(1)}h`;
+      }
+
+      async function post(url) {
+        await fetch(url, { method: "POST" });
+        await refresh();
+      }
+
+      async function refresh() {
+        try {
+          const res = await fetch("/api/cloud-upload/status", { cache: "no-store" });
+          const data = await res.json();
+          render(data);
+        } catch (error) {
+          els.message.innerHTML = `<span class="error">监控请求失败：${error.message}</span>`;
+        }
+      }
+
+      function render(data) {
+        const state = data.state || {};
+        const remote = data.remote || {};
+        const running = Boolean(state.running);
+        els.runState.textContent = running ? "上传中" : "已暂停";
+        els.runState.classList.toggle("running", running);
+        els.message.textContent = state.error ? `错误：${state.error}` : state.message || "--";
+        els.message.className = state.error ? "error" : "muted";
+
+        const percent = remote.ok ? Number(remote.percent || 0) : 0;
+        els.overallPercent.textContent = `${percent.toFixed(2)}%`;
+        els.overallBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+        els.overallSize.textContent = remote.ok ? `${remote.completed_human} / ${remote.total_human}` : "--";
+        els.speed.textContent = running ? `${humanBytes(state.speed_bps)}/s` : "--";
+        const remain = state.speed_bps > 0 && remote.ok ? (Number(remote.total || 0) - Number(remote.completed || 0)) / state.speed_bps : 0;
+        els.eta.textContent = humanEta(remain);
+        els.disk.textContent = remote.ok && remote.disk ? `磁盘 ${remote.disk.used_human} / ${remote.disk.size_human}` : "磁盘 --";
+        els.updated.textContent = new Date().toLocaleTimeString();
+
+        if (!remote.ok) {
+          els.fileList.innerHTML = `<div class="file error">${remote.message || remote.error || "远端读取失败"}</div>`;
+        } else {
+          els.fileList.innerHTML = (remote.files || [])
+            .map((file) => {
+              const status = file.status === "done" ? "完成" : file.status === "partial" ? "断点" : "等待";
+              return `
+                <div class="file">
+                  <div class="file-head">
+                    <div class="file-name">${file.label}</div>
+                    <div class="file-meta">${status} · ${file.percent.toFixed(2)}%</div>
+                  </div>
+                  <div class="progress"><div class="bar" style="width:${Math.max(0, Math.min(100, file.percent))}%"></div></div>
+                  <div class="file-meta" style="margin-top:8px">${file.uploaded_human} / ${file.size_human} · ${file.kind}</div>
+                </div>
+              `;
+            })
+            .join("");
+        }
+
+        const logs = (state.logs || []).slice().reverse();
+        els.log.innerHTML = logs.length
+          ? logs.map((item) => `<div><span class="muted">${new Date(item.time * 1000).toLocaleTimeString()}</span> ${item.text}</div>`).join("")
+          : `<span class="muted">暂无日志</span>`;
+      }
+
+      document.getElementById("refresh-btn").addEventListener("click", refresh);
+      document.getElementById("start-btn").addEventListener("click", () => post("/api/cloud-upload/start"));
+      document.getElementById("stop-btn").addEventListener("click", () => post("/api/cloud-upload/stop"));
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
+</html>

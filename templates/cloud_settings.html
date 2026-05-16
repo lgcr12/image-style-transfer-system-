@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>云端模型接入</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root {
+        --ink: #0f172a;
+        --muted: #64748b;
+        --blue: #2d5bff;
+        --cyan: #06b6d4;
+      }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 12% 8%, rgba(45, 91, 255, 0.12), transparent 32%),
+          radial-gradient(circle at 90% 18%, rgba(6, 182, 212, 0.12), transparent 34%),
+          #f8fbff;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .glass {
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.86);
+        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(24px) saturate(160%);
+      }
+      .field {
+        width: 100%;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(255, 255, 255, 0.82);
+        padding: 12px 14px;
+        outline: none;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      .field:focus {
+        border-color: rgba(45, 91, 255, 0.55);
+        box-shadow: 0 0 0 4px rgba(45, 91, 255, 0.1);
+      }
+      .btn {
+        border-radius: 999px;
+        padding: 10px 18px;
+        font-size: 13px;
+        font-weight: 800;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+      .btn:active { transform: scale(0.97); }
+      .btn-primary {
+        color: white;
+        background: linear-gradient(135deg, var(--blue), var(--cyan));
+        box-shadow: 0 14px 30px rgba(45, 91, 255, 0.22);
+      }
+      .btn-soft {
+        color: #334155;
+        background: rgba(255, 255, 255, 0.78);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        background: rgba(45, 91, 255, 0.08);
+        color: #1d4ed8;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <main class="mx-auto max-w-7xl px-6 py-8">
+      <header class="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p class="mono text-xs font-bold uppercase tracking-[0.28em] text-blue-500">Cloud Backend</p>
+          <h1 class="mt-3 text-4xl font-black tracking-tight">云端模型接入后门</h1>
+          <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
+            给其他用户接入自己的云端 ComfyUI。这里保存 SSH 配置、同步远端模型，并把前端风格绑定到远端 checkpoint / LoRA。
+          </p>
+        </div>
+        <div class="flex gap-3">
+          <a class="btn btn-soft" href="/sd">返回 SD 页面</a>
+          <a class="btn btn-soft" href="/cloud-upload-monitor">上传监控</a>
+        </div>
+      </header>
+
+      <section class="glass rounded-[32px] p-6">
+        <div class="mb-5 flex items-center justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-black">1. 云端连接</h2>
+            <p class="text-xs text-slate-500">密码只写入本机 local 配置；接口不会返回明文密码。</p>
+          </div>
+          <span id="password-state" class="chip">未加载</span>
+        </div>
+        <div class="grid gap-4 md:grid-cols-5">
+          <label class="md:col-span-2">
+            <span class="mb-1 block text-xs font-bold text-slate-500">SSH Host</span>
+            <input id="cloud-host" class="field mono text-sm" placeholder="connect.xxx.com" />
+          </label>
+          <label>
+            <span class="mb-1 block text-xs font-bold text-slate-500">Port</span>
+            <input id="cloud-port" class="field mono text-sm" type="number" min="1" max="65535" placeholder="22" />
+          </label>
+          <label>
+            <span class="mb-1 block text-xs font-bold text-slate-500">Username</span>
+            <input id="cloud-user" class="field mono text-sm" placeholder="root" />
+          </label>
+          <label>
+            <span class="mb-1 block text-xs font-bold text-slate-500">Password</span>
+            <input id="cloud-pass" class="field mono text-sm" type="password" placeholder="留空则保留原密码" />
+          </label>
+          <label class="md:col-span-5">
+            <span class="mb-1 block text-xs font-bold text-slate-500">ComfyUI Root</span>
+            <input id="cloud-root" class="field mono text-sm" placeholder="/root/autodl-tmp/ComfyUI" />
+          </label>
+        </div>
+        <div class="mt-5 flex flex-wrap items-center gap-3">
+          <button id="save-config-btn" class="btn btn-primary" type="button">保存配置</button>
+          <button id="test-config-btn" class="btn btn-soft" type="button">测试连接 / GPU</button>
+          <button id="sync-models-btn" class="btn btn-soft" type="button">同步远端模型列表</button>
+        </div>
+        <pre id="cloud-log" class="mt-4 max-h-56 overflow-auto rounded-2xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">等待操作...</pre>
+      </section>
+
+      <section class="mt-6 grid gap-6 lg:grid-cols-2">
+        <div class="glass rounded-[32px] p-6">
+          <h2 class="text-lg font-black">2. 远端 Checkpoint</h2>
+          <div id="remote-checkpoints" class="mt-4 space-y-2 text-sm text-slate-600">未同步</div>
+        </div>
+        <div class="glass rounded-[32px] p-6">
+          <h2 class="text-lg font-black">3. 远端 LoRA</h2>
+          <div id="remote-loras" class="mt-4 space-y-2 text-sm text-slate-600">未同步</div>
+        </div>
+      </section>
+
+      <section class="glass mt-6 rounded-[32px] p-6">
+        <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-lg font-black">4. 基础模型绑定</h2>
+            <p class="text-xs text-slate-500">前端选择的基础模型 key 会映射到云端 checkpoint 文件名。</p>
+          </div>
+          <button id="save-mapping-btn-top" class="btn btn-primary" type="button">保存全部绑定</button>
+        </div>
+        <div id="base-map" class="grid gap-3 md:grid-cols-2"></div>
+      </section>
+
+      <section class="glass mt-6 rounded-[32px] p-6">
+        <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-lg font-black">5. 风格 LoRA 绑定</h2>
+            <p class="text-xs text-slate-500">每个风格可选择一个远端 LoRA、权重和云端增强提示词；不选 LoRA 时走 prompt-only。</p>
+          </div>
+          <button id="save-mapping-btn" class="btn btn-primary" type="button">保存全部绑定</button>
+        </div>
+        <div id="style-map" class="space-y-4"></div>
+      </section>
+    </main>
+
+    <script>
+      const styleOptions = {{ sd_styles | tojson }};
+      const baseOptions = {{ base_models | tojson }};
+      let state = { config: {}, mappings: {}, checkpoints: [], loras: [] };
+
+      const $ = (id) => document.getElementById(id);
+      const log = (data) => {
+        $("cloud-log").textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+      };
+
+      function optionList(items, selected, allowEmpty) {
+        const rows = [];
+        if (allowEmpty) rows.push(`<option value="">不使用 LoRA</option>`);
+        items.forEach((item) => {
+          const name = item.name || item;
+          rows.push(`<option value="${escapeHtml(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`);
+        });
+        if (selected && !items.some((item) => (item.name || item) === selected)) {
+          rows.push(`<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}（未在远端列表中）</option>`);
+        }
+        return rows.join("");
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, (s) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[s]));
+      }
+
+      function renderRemoteList(id, items) {
+        const root = $(id);
+        if (!items.length) {
+          root.textContent = "未找到模型文件";
+          return;
+        }
+        root.innerHTML = items.map((item) => `
+          <div class="flex items-center justify-between rounded-2xl border border-white/70 bg-white/60 px-4 py-3">
+            <span class="mono truncate text-xs font-bold">${escapeHtml(item.name)}</span>
+            <span class="mono text-[11px] text-slate-400">${escapeHtml(item.size_human || "")}</span>
+          </div>
+        `).join("");
+      }
+
+      function renderMappings() {
+        const baseMap = state.mappings.base_models || {};
+        $("base-map").innerHTML = Object.entries(baseOptions).map(([key, info]) => `
+          <label class="rounded-3xl border border-white/70 bg-white/55 p-4">
+            <span class="mb-2 block text-xs font-black text-slate-500">${escapeHtml(info.label || key)}</span>
+            <span class="mono mb-3 block text-[11px] text-slate-400">${escapeHtml(key)}</span>
+            <select class="field mapping-base mono text-xs" data-key="${escapeHtml(key)}">
+              ${optionList(state.checkpoints, baseMap[key] || "", false)}
+            </select>
+          </label>
+        `).join("");
+
+        const loraMap = state.mappings.loras || {};
+        const promptMap = state.mappings.style_prompts || {};
+        const strengthMap = state.mappings.lora_strength || {};
+        $("style-map").innerHTML = Object.entries(styleOptions).map(([key, label]) => `
+          <div class="rounded-3xl border border-white/70 bg-white/55 p-4">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="text-sm font-black">${escapeHtml(label)}</div>
+                <div class="mono text-[11px] text-slate-400">${escapeHtml(key)}</div>
+              </div>
+              <label class="flex items-center gap-2">
+                <span class="text-xs font-bold text-slate-500">权重</span>
+                <input class="field mapping-strength mono w-24 text-xs" data-key="${escapeHtml(key)}" type="number" step="0.05" min="-2" max="2" value="${escapeHtml(strengthMap[key] ?? 0.75)}" />
+              </label>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              <label>
+                <span class="mb-1 block text-xs font-bold text-slate-500">远端 LoRA</span>
+                <select class="field mapping-lora mono text-xs" data-key="${escapeHtml(key)}">
+                  ${optionList(state.loras, loraMap[key] || "", true)}
+                </select>
+              </label>
+              <label>
+                <span class="mb-1 block text-xs font-bold text-slate-500">云端提示词补充</span>
+                <input class="field mapping-prompt text-xs" data-key="${escapeHtml(key)}" value="${escapeHtml(promptMap[key] || "")}" />
+              </label>
+            </div>
+          </div>
+        `).join("");
+      }
+
+      async function fetchJson(url, options) {
+        const res = await fetch(url, options);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+        return data;
+      }
+
+      async function loadConfig() {
+        const data = await fetchJson("/api/cloud-settings/config");
+        state.config = data.config || {};
+        state.mappings = data.mappings || {};
+        $("cloud-host").value = state.config.host || "";
+        $("cloud-port").value = state.config.port || 22;
+        $("cloud-user").value = state.config.username || "root";
+        $("cloud-root").value = state.config.comfy_root || "/root/autodl-tmp/ComfyUI";
+        $("password-state").textContent = state.config.has_password ? "已保存密码" : "未保存密码";
+        state.checkpoints = (state.mappings.uploaded_checkpoints || []).map((name) => ({ name }));
+        state.loras = (state.mappings.uploaded_loras || []).map((name) => ({ name }));
+        renderRemoteList("remote-checkpoints", state.checkpoints);
+        renderRemoteList("remote-loras", state.loras);
+        renderMappings();
+      }
+
+      async function saveConfig() {
+        const payload = {
+          host: $("cloud-host").value.trim(),
+          port: Number($("cloud-port").value || 22),
+          username: $("cloud-user").value.trim() || "root",
+          password: $("cloud-pass").value,
+          comfy_root: $("cloud-root").value.trim() || "/root/autodl-tmp/ComfyUI",
+        };
+        const data = await fetchJson("/api/cloud-settings/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        $("cloud-pass").value = "";
+        state.config = data.config || {};
+        $("password-state").textContent = state.config.has_password ? "已保存密码" : "未保存密码";
+        log("配置已保存");
+      }
+
+      async function syncRemoteModels() {
+        log("正在连接云端并读取模型目录...");
+        const data = await fetchJson("/api/cloud-settings/remote-models");
+        state.checkpoints = data.checkpoints || [];
+        state.loras = data.loras || [];
+        renderRemoteList("remote-checkpoints", state.checkpoints);
+        renderRemoteList("remote-loras", state.loras);
+        renderMappings();
+        log({ checkpoints: state.checkpoints.length, loras: state.loras.length });
+      }
+
+      async function saveMappings() {
+        const payload = { base_models: {}, loras: {}, style_prompts: {}, lora_strength: {} };
+        document.querySelectorAll(".mapping-base").forEach((el) => payload.base_models[el.dataset.key] = el.value);
+        document.querySelectorAll(".mapping-lora").forEach((el) => payload.loras[el.dataset.key] = el.value);
+        document.querySelectorAll(".mapping-prompt").forEach((el) => payload.style_prompts[el.dataset.key] = el.value);
+        document.querySelectorAll(".mapping-strength").forEach((el) => payload.lora_strength[el.dataset.key] = el.value);
+        const data = await fetchJson("/api/cloud-settings/mappings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        state.mappings = data.mappings || state.mappings;
+        log("模型绑定已保存");
+      }
+
+      $("save-config-btn").addEventListener("click", () => saveConfig().catch((e) => log(e.message)));
+      $("test-config-btn").addEventListener("click", () => fetchJson("/api/cloud-settings/test", { method: "POST" }).then(log).catch((e) => log(e.message)));
+      $("sync-models-btn").addEventListener("click", () => syncRemoteModels().catch((e) => log(e.message)));
+      $("save-mapping-btn").addEventListener("click", () => saveMappings().catch((e) => log(e.message)));
+      $("save-mapping-btn-top").addEventListener("click", () => saveMappings().catch((e) => log(e.message)));
+
+      loadConfig().catch((e) => log(e.message));
+    </script>
+  </body>
+</html>

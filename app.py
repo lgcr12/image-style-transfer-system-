@@ -8,6 +8,9 @@ import asyncio
 import time
 import os
 import gzip
+import glob
+import socket
+import threading
 import urllib.parse
 import urllib.request
 from html import escape
@@ -24,6 +27,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi import Request
 
 from PIL import Image
+import paramiko
 
 from style_transfer import load_model, run_style_transfer, AVAILABLE_MODELS
 import style_transfer as style_transfer_module
@@ -44,6 +48,13 @@ from job_queue import JobQueue, QueueJob
 from exporter import export_compare_batch, export_nine_grid, export_transition_video
 from share_builder import build_share_card, build_copywriting, build_social_cover
 from job_store import JobStore
+from cloud_comfyui import (
+    DEFAULT_COMFY_ROOT,
+    ensure_comfyui,
+    get_cloud_model_capabilities,
+    load_cloud_mappings,
+    run_cloud_img2img,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -72,6 +83,419 @@ QWEATHER_API_HOST = os.getenv("QWEATHER_API_HOST", "nq5egn2wpt.re.qweatherapi.co
 QWEATHER_LOCATION_ID = os.getenv("QWEATHER_LOCATION_ID", "101010100")
 STYLE_MODEL_CONFIG_PATH = BASE_DIR / "config" / "style_models.json"
 SD_STYLE_CONFIG_PATH = BASE_DIR / "config" / "sd_styles.json"
+CLOUD_UPLOAD_CONFIG_PATH = DB_DIR / "cloud_upload_config.local.json"
+CLOUD_COMFY_MAPPING_PATH = DB_DIR / "cloud_comfyui_mappings.local.json"
+CLOUD_COMFY_ROOT = DEFAULT_COMFY_ROOT
+
+
+def _find_file_by_size(base: Path, size: int, suffix: str = "*.safetensors") -> Path | None:
+    for item in base.glob(suffix):
+        try:
+            if item.is_file() and item.stat().st_size == size:
+                return item
+        except OSError:
+            continue
+    return None
+
+
+def _first_glob(base: Path, pattern: str) -> Path | None:
+    hits = sorted(base.glob(pattern), key=lambda p: p.stat().st_size if p.is_file() else 0, reverse=True)
+    return hits[0] if hits else None
+
+
+def _cloud_upload_manifest() -> list[dict]:
+    candidates: list[tuple[Path | None, str, str]] = [
+        (
+            BASE_DIR / "v1-5-pruned-emaonly.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/checkpoints/v1-5-pruned-emaonly.safetensors",
+            "SD 1.5 基础模型",
+        ),
+        (
+            BASE_DIR / "MeinaMixV12.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/checkpoints/MeinaMixV12.safetensors",
+            "MeinaMix V12",
+        ),
+        (
+            _find_file_by_size(IMPORTED_MODEL_DIR, 340782308),
+            f"{CLOUD_COMFY_ROOT}/models/loras/pixel_cute_anime.safetensors",
+            "像素动漫 LoRA",
+        ),
+        (
+            _find_file_by_size(IMPORTED_MODEL_DIR, 151119112),
+            f"{CLOUD_COMFY_ROOT}/models/loras/japanese_old_manga_v1.safetensors",
+            "日本旧漫 LoRA",
+        ),
+        (
+            _find_file_by_size(BASE_DIR, 151113728),
+            f"{CLOUD_COMFY_ROOT}/models/loras/watercolor_ink_v2.safetensors",
+            "水彩泼墨 LoRA",
+        ),
+        (
+            _find_file_by_size(IMPORTED_MODEL_DIR, 202701676),
+            f"{CLOUD_COMFY_ROOT}/models/loras/cute_anime_head_xl.safetensors",
+            "可爱动漫大头像 XL LoRA",
+        ),
+        (
+            BASE_DIR / "jojo.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/loras/jojo.safetensors",
+            "JoJo LoRA",
+        ),
+        (
+            _find_file_by_size(BASE_DIR, 151111468),
+            f"{CLOUD_COMFY_ROOT}/models/loras/baihua_midjourney_anime.safetensors",
+            "百花缭乱 Midjourney LoRA",
+        ),
+        (
+            BASE_DIR / "kyoto_anime.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/loras/kyoto_anime.safetensors",
+            "京阿尼 Kyoto LoRA",
+        ),
+        (
+            BASE_DIR / "shinkai__Character_v1.0.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/loras/shinkai_character_v1.safetensors",
+            "新海诚 Character LoRA",
+        ),
+        (
+            BASE_DIR / "shinkai_view_V1.0.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/loras/shinkai_view_v1.safetensors",
+            "新海诚 View LoRA",
+        ),
+        (
+            BASE_DIR / "ukiyo.safetensors",
+            f"{CLOUD_COMFY_ROOT}/models/loras/ukiyo.safetensors",
+            "浮世绘 LoRA",
+        ),
+        (
+            _find_file_by_size(BASE_DIR, 236117024),
+            f"{CLOUD_COMFY_ROOT}/models/loras/ink_wash_v1.safetensors",
+            "水墨 LoRA",
+        ),
+    ]
+    leosam = _first_glob(IMPORTED_MODEL_DIR, "LEOSAM*.safetensors")
+    if leosam:
+        candidates.append(
+            (
+                leosam,
+                f"{CLOUD_COMFY_ROOT}/models/checkpoints/leosam_aiart_sdxl_v2.safetensors",
+                "LEOSAM AIArt SDXL",
+            )
+        )
+    illustrious = _first_glob(IMPORTED_MODEL_DIR, "Illustrious-XL-v2.0.safetensors")
+    if illustrious:
+        candidates.append(
+            (
+                illustrious,
+                f"{CLOUD_COMFY_ROOT}/models/checkpoints/Illustrious-XL-v2.0.safetensors",
+                "Illustrious XL v2.0",
+            )
+        )
+
+    try:
+        sd_cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}, "base_models": {}})
+        for key, item in (sd_cfg.get("base_models") or {}).items():
+            if not isinstance(item, dict) or item.get("disabled"):
+                continue
+            local_path = Path(str(item.get("path") or ""))
+            if local_path.is_file():
+                candidates.append(
+                    (
+                        local_path,
+                        f"{CLOUD_COMFY_ROOT}/models/checkpoints/{local_path.name}",
+                        f"基础模型：{item.get('label') or key}",
+                    )
+                )
+        for key, item in (sd_cfg.get("adapters") or {}).items():
+            if not isinstance(item, dict) or item.get("disabled"):
+                continue
+            local_path = Path(str(item.get("default_path") or ""))
+            if local_path.is_file():
+                candidates.append(
+                    (
+                        local_path,
+                        f"{CLOUD_COMFY_ROOT}/models/loras/{local_path.name}",
+                        f"LoRA：{key}",
+                    )
+                )
+    except Exception:
+        pass
+
+    manifest = []
+    seen_remote: set[str] = set()
+    seen_local: set[str] = set()
+    for local_path, remote_path, label in candidates:
+        if not local_path or not local_path.is_file():
+            continue
+        local_key = str(local_path.resolve()).lower()
+        if remote_path in seen_remote or local_key in seen_local:
+            continue
+        seen_remote.add(remote_path)
+        seen_local.add(local_key)
+        size = local_path.stat().st_size
+        manifest.append(
+            {
+                "label": label,
+                "local": str(local_path),
+                "remote": remote_path,
+                "part": f"{remote_path}.part",
+                "size": size,
+                "kind": "lora" if "/loras/" in remote_path else "checkpoint",
+            }
+        )
+    return manifest
+
+
+def _sync_cloud_mappings_from_sd_config() -> dict:
+    mappings = load_cloud_mappings(CLOUD_COMFY_MAPPING_PATH)
+    sd_cfg = _read_json_file(SD_STYLE_CONFIG_PATH, {"styles": {}, "adapters": {}, "base_models": {}})
+    base_models = dict(mappings.get("base_models") or {})
+    loras = dict(mappings.get("loras") or {})
+    style_prompts = dict(mappings.get("style_prompts") or {})
+    lora_strength = dict(mappings.get("lora_strength") or {})
+
+    for key, item in (sd_cfg.get("base_models") or {}).items():
+        if not isinstance(item, dict) or item.get("disabled"):
+            continue
+        local_path = Path(str(item.get("path") or ""))
+        if local_path.is_file():
+            base_models.setdefault(str(key), local_path.name)
+
+    adapters = sd_cfg.get("adapters") or {}
+    for style_key, style in (sd_cfg.get("styles") or {}).items():
+        if not isinstance(style, dict) or style.get("disabled"):
+            continue
+        adapter_keys = [str(x) for x in (style.get("adapters") or []) if x]
+        if adapter_keys:
+            adapter = adapters.get(adapter_keys[0])
+            if isinstance(adapter, dict):
+                local_path = Path(str(adapter.get("default_path") or ""))
+                if local_path.is_file():
+                    loras.setdefault(str(style_key), local_path.name)
+        if style.get("prompt"):
+            style_prompts[str(style_key)] = str(style.get("prompt"))
+        weights = style.get("weights") or []
+        if weights:
+            try:
+                lora_strength[str(style_key)] = float(weights[0])
+            except (TypeError, ValueError):
+                pass
+
+    clean = {
+        "base_models": base_models,
+        "loras": loras,
+        "style_prompts": style_prompts,
+        "lora_strength": lora_strength,
+    }
+    CLOUD_COMFY_MAPPING_PATH.write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
+    return clean
+
+
+def _read_cloud_upload_config() -> dict:
+    config = {
+        "host": os.getenv("CLOUD_SSH_HOST", ""),
+        "port": int(os.getenv("CLOUD_SSH_PORT", "22") or "22"),
+        "username": os.getenv("CLOUD_SSH_USER", "root"),
+        "password": os.getenv("CLOUD_SSH_PASSWORD", ""),
+        "comfy_root": os.getenv("CLOUD_COMFY_ROOT", CLOUD_COMFY_ROOT),
+    }
+    try:
+        if CLOUD_UPLOAD_CONFIG_PATH.is_file():
+            local_cfg = json.loads(CLOUD_UPLOAD_CONFIG_PATH.read_text(encoding="utf-8-sig"))
+            if isinstance(local_cfg, dict):
+                config.update({k: v for k, v in local_cfg.items() if v not in (None, "")})
+                config["port"] = int(config.get("port") or 22)
+    except Exception:
+        pass
+    return config
+
+
+class CloudUploadManager:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.thread: threading.Thread | None = None
+        self.stop_event = threading.Event()
+        self.state: dict = {
+            "running": False,
+            "error": "",
+            "message": "等待开始",
+            "current_remote": "",
+            "current_label": "",
+            "current_sent": 0,
+            "current_total": 0,
+            "overall_sent": 0,
+            "overall_total": 0,
+            "speed_bps": 0,
+            "started_at": None,
+            "updated_at": None,
+            "logs": [],
+        }
+
+    def _set(self, **kwargs) -> None:
+        with self.lock:
+            self.state.update(kwargs)
+            self.state["updated_at"] = time.time()
+
+    def _log(self, text: str) -> None:
+        with self.lock:
+            logs = list(self.state.get("logs") or [])
+            logs.append({"time": time.time(), "text": text})
+            self.state["logs"] = logs[-80:]
+            self.state["message"] = text
+            self.state["updated_at"] = time.time()
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return json.loads(json.dumps(self.state, ensure_ascii=False))
+
+    def start(self) -> bool:
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return False
+            self.stop_event.clear()
+            self.state.update(
+                {
+                    "running": True,
+                    "error": "",
+                    "message": "准备连接远端",
+                    "started_at": time.time(),
+                    "updated_at": time.time(),
+                    "speed_bps": 0,
+                    "logs": [],
+                }
+            )
+            self.thread = threading.Thread(target=self._worker, daemon=True)
+            self.thread.start()
+            return True
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self._log("收到停止请求，当前块写完后暂停")
+
+    def _connect(self):
+        cfg = _read_cloud_upload_config()
+        if not cfg.get("host") or not cfg.get("password"):
+            raise RuntimeError("缺少云端 SSH 配置，请设置 data/cloud_upload_config.local.json")
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            str(cfg["host"]),
+            port=int(cfg.get("port") or 22),
+            username=str(cfg.get("username") or "root"),
+            password=str(cfg["password"]),
+            timeout=25,
+            banner_timeout=30,
+            auth_timeout=30,
+        )
+        client.get_transport().set_keepalive(15)
+        return client, client.open_sftp()
+
+    @staticmethod
+    def _remote_size(sftp, path: str) -> int | None:
+        try:
+            return int(sftp.stat(path).st_size)
+        except FileNotFoundError:
+            return None
+
+    def _worker(self) -> None:
+        try:
+            manifest = _cloud_upload_manifest()
+            total = sum(int(item["size"]) for item in manifest)
+            self._set(overall_total=total, overall_sent=0)
+            self._log(f"上传队列 {len(manifest)} 个文件")
+
+            client, sftp = self._connect()
+            try:
+                client.exec_command(
+                    f"mkdir -p {CLOUD_COMFY_ROOT}/models/checkpoints {CLOUD_COMFY_ROOT}/models/loras"
+                )[1].read()
+            finally:
+                sftp.close()
+                client.close()
+
+            completed_before = 0
+            for item in manifest:
+                if self.stop_event.is_set():
+                    break
+                local = Path(str(item["local"]))
+                remote = str(item["remote"])
+                part = str(item["part"])
+                size = int(item["size"])
+                label = str(item["label"])
+
+                while not self.stop_event.is_set():
+                    client, sftp = self._connect()
+                    try:
+                        done = self._remote_size(sftp, remote)
+                        if done == size:
+                            completed_before += size
+                            self._set(overall_sent=completed_before)
+                            self._log(f"已存在：{label}")
+                            break
+                        part_size = self._remote_size(sftp, part) or 0
+                        if part_size > size:
+                            sftp.remove(part)
+                            part_size = 0
+                        self._set(
+                            current_remote=remote,
+                            current_label=label,
+                            current_sent=part_size,
+                            current_total=size,
+                            overall_sent=completed_before + part_size,
+                        )
+                        self._log(f"续传：{label}")
+                        with local.open("rb") as local_file:
+                            local_file.seek(part_size)
+                            remote_file = sftp.open(part, "ab")
+                            remote_file.set_pipelined(False)
+                            sent = part_size
+                            last_time = time.time()
+                            last_sent = sent
+                            try:
+                                while sent < size and not self.stop_event.is_set():
+                                    chunk = local_file.read(512 * 1024)
+                                    if not chunk:
+                                        break
+                                    remote_file.write(chunk)
+                                    sent += len(chunk)
+                                    now = time.time()
+                                    if now - last_time >= 1.0 or sent >= size:
+                                        speed = (sent - last_sent) / max(now - last_time, 0.001)
+                                        self._set(
+                                            current_sent=sent,
+                                            current_total=size,
+                                            overall_sent=completed_before + sent,
+                                            speed_bps=speed,
+                                        )
+                                        last_time = now
+                                        last_sent = sent
+                            finally:
+                                remote_file.close()
+                        if sent >= size:
+                            existing = self._remote_size(sftp, remote)
+                            if existing is not None and existing != size:
+                                sftp.remove(remote)
+                            sftp.rename(part, remote)
+                            completed_before += size
+                            self._set(overall_sent=completed_before)
+                            self._log(f"完成：{label}")
+                            break
+                    except (EOFError, OSError, socket.error, paramiko.SSHException) as exc:
+                        self._log(f"连接中断，5 秒后重试：{type(exc).__name__}")
+                        time.sleep(5)
+                    finally:
+                        try:
+                            sftp.close()
+                            client.close()
+                        except Exception:
+                            pass
+
+            self._set(running=False, speed_bps=0)
+            self._log("上传已暂停" if self.stop_event.is_set() else "上传队列完成")
+        except Exception as exc:
+            self._set(running=False, error=str(exc), speed_bps=0)
+            self._log(f"上传失败：{exc}")
+
+
+cloud_upload_manager = CloudUploadManager()
 
 
 def _slugify_model_key(value: str, *, prefix: str = "custom") -> str:
@@ -246,18 +670,56 @@ class JobStatus:
         self.error: str | None = None
         self.score: dict | None = None
         self.next_recipe: dict | None = None
+        self.requested_base_model: str | None = None
+        self.effective_base_model: str | None = None
+        self.effective_base_label: str | None = None
+        self.effective_base_type: str | None = None
         self.created_at_ms: int = int(time.time() * 1000)
 
 
 jobs: Dict[str, JobStatus] = {}
 job_queue = JobQueue(concurrency=1)
 job_store = JobStore(DB_DIR / "jobs.db")
+cloud_runtime_cache: dict = {"ts": 0.0, "payload": None}
+cloud_runtime_lock = threading.Lock()
 
 
 def _diagnose_error(err: str | None) -> dict | None:
     if not err:
         return None
     t = str(err).lower()
+    if "no devices were found" in t or "no cuda gpus are available" in t or "cuda is not available" in t:
+        return {
+            "code": "cloud_no_gpu",
+            "title": "云端 GPU 不可用",
+            "advice": "当前云端实例没有挂载 GPU。请先在云平台把实例从无卡模式切回 RTX 4090，再重新提交任务。",
+        }
+    if "connection refused" in t or "system_stats" in t or ("comfyui" in t and "timeout" in t):
+        return {
+            "code": "comfyui_unreachable",
+            "title": "ComfyUI 未运行或不可访问",
+            "advice": "请在云端配置页测试连接，确认 ComfyUI 已启动，或重新提交时让系统自动启动远端服务。",
+        }
+    if (
+        "prompt_outputs_failed_validation" in t
+        or "value not in list" in t
+        or "comfyui http 400" in t
+        or "http error 400" in t
+        or "failed to validate prompt" in t
+    ):
+        return {
+            "code": "comfyui_prompt_validation",
+            "title": "云端工作流校验失败",
+            "advice": "当前选择的基础模型或 LoRA 名称与云端 ComfyUI 可用列表不一致。请刷新云端模型列表，确认模型已上传，并重新提交任务。",
+        }
+    if ("no such file" in t or "does not exist" in t or "not found" in t) and (
+        "safetensors" in t or "ckpt" in t or "lora" in t
+    ):
+        return {
+            "code": "remote_model_missing",
+            "title": "远端模型文件缺失",
+            "advice": "请进入云端接入 / 模型绑定页，同步远端模型列表，并确认当前风格绑定的 checkpoint 与 LoRA 已上传完成。",
+        }
     if "outofmemory" in t or "cuda out of memory" in t or "cudnn" in t:
         return {
             "code": "oom",
@@ -279,7 +741,61 @@ def _diagnose_error(err: str | None) -> dict | None:
     return {
         "code": "unknown",
         "title": "未知错误",
-        "advice": "请尝试点击重跑；若仍失败，建议降低参数并重试。",
+        "advice": "请尝试点击重跑；如果仍失败，建议降低步数、分辨率或重绘强度后重试。",
+    }
+
+
+def _base_model_public_info(base_key: str) -> dict:
+    info = sd_style_transfer_module.get_sd_base_model_info(base_key)
+    model_type = str(info.get("model_type") or info.get("type") or "").lower()
+    if not model_type:
+        model_type = "sdxl" if sd_style_transfer_module.is_sd_base_model_sdxl(base_key) else "sd15"
+    return {
+        "key": base_key,
+        "label": str(info.get("label") or base_key or "default"),
+        "type": model_type,
+        "recommended_steps": info.get("recommended_steps"),
+        "recommended_cfg": info.get("recommended_cfg"),
+        "recommended_width": info.get("recommended_width"),
+        "recommended_height": info.get("recommended_height"),
+    }
+
+
+def _style_bound_base_key(sd_style_name: str) -> str:
+    style_def = (get_sd_style_config().get("styles") or {}).get(sd_style_name)
+    if isinstance(style_def, dict):
+        return str(style_def.get("base_model") or "").strip()
+    return ""
+
+
+def _resolve_sd_request_base(sd_style_name: str, requested_base: str | None) -> dict:
+    requested = str(requested_base or "default").strip() or "default"
+    effective = sd_style_transfer_module.resolve_sd_base_model_key(sd_style_name, requested)
+    requested_effective = sd_style_transfer_module.resolve_sd_base_model_key(sd_style_name, requested)
+    bound = _style_bound_base_key(sd_style_name)
+
+    # If the user explicitly chooses a concrete base model that conflicts with
+    # the LoRA-bound model family, fail before queueing instead of wasting time.
+    if requested not in {"", "default", "style_bound"} and bound:
+        requested_is_xl = sd_style_transfer_module.is_sd_base_model_sdxl(requested_effective)
+        bound_is_xl = sd_style_transfer_module.is_sd_base_model_sdxl(bound)
+        if requested_is_xl != bound_is_xl:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"当前 LoRA 绑定的是 {'SDXL' if bound_is_xl else 'SD1.5'} 底模，"
+                    f"不能手动改用 {'SDXL' if requested_is_xl else 'SD1.5'}。请选择“跟随当前 LoRA 绑定”。"
+                ),
+            )
+
+    info = _base_model_public_info(effective)
+    return {
+        "requested": requested,
+        "effective": effective,
+        "label": info["label"],
+        "type": info["type"],
+        "preset": info,
+        "style_bound": bound,
     }
 
 
@@ -305,6 +821,10 @@ def _persist_job(job_id: str, params: dict | None = None) -> None:
         "error": j.error,
         "score": j.score,
         "next_recipe": j.next_recipe,
+        "requested_base_model": j.requested_base_model,
+        "effective_base_model": j.effective_base_model,
+        "effective_base_label": j.effective_base_label,
+        "effective_base_type": j.effective_base_type,
         "params": params,
         "content_path": content_path,
         "style_path": style_path,
@@ -846,6 +1366,402 @@ async def local_history_page(request: Request):
     )
 
 
+@app.get("/cloud-upload-monitor", response_class=HTMLResponse)
+async def cloud_upload_monitor_page(request: Request):
+    return templates.TemplateResponse(
+        "cloud_upload_monitor.html",
+        {"request": request},
+    )
+
+
+@app.get("/cloud-settings", response_class=HTMLResponse)
+async def cloud_settings_page(request: Request):
+    return templates.TemplateResponse(
+        "cloud_settings.html",
+        {
+            "request": request,
+            "sd_styles": AVAILABLE_SD_STYLES,
+            "base_models": get_sd_base_models(),
+        },
+    )
+
+
+def _human_bytes(value: int | float | None) -> str:
+    size = float(value or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            if unit == "B":
+                return f"{int(size)}B"
+            return f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}TB"
+
+
+def _sanitize_cloud_config(config: dict) -> dict:
+    return {
+        "host": str(config.get("host") or ""),
+        "port": int(config.get("port") or 22),
+        "username": str(config.get("username") or "root"),
+        "comfy_root": str(config.get("comfy_root") or CLOUD_COMFY_ROOT),
+        "has_password": bool(config.get("password")),
+    }
+
+
+def _write_cloud_upload_config(update: dict) -> dict:
+    current = _read_cloud_upload_config()
+    next_config = {
+        "host": str(update.get("host") or current.get("host") or "").strip(),
+        "port": int(update.get("port") or current.get("port") or 22),
+        "username": str(update.get("username") or current.get("username") or "root").strip(),
+        "password": str(update.get("password") or current.get("password") or ""),
+        "comfy_root": str(update.get("comfy_root") or current.get("comfy_root") or CLOUD_COMFY_ROOT).rstrip("/"),
+    }
+    if not next_config["host"]:
+        raise HTTPException(status_code=400, detail="缺少 SSH Host")
+    if not next_config["password"]:
+        raise HTTPException(status_code=400, detail="缺少 SSH 密码")
+    CLOUD_UPLOAD_CONFIG_PATH.write_text(
+        json.dumps(next_config, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return next_config
+
+
+def _cloud_connect_from_config(config: dict):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(
+        str(config["host"]),
+        port=int(config.get("port") or 22),
+        username=str(config.get("username") or "root"),
+        password=str(config["password"]),
+        timeout=15,
+        banner_timeout=25,
+        auth_timeout=25,
+    )
+    client.get_transport().set_keepalive(15)
+    return client
+
+
+def _cloud_exec_text(client, command: str, timeout: int = 30) -> tuple[str, str, int]:
+    stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+    out = stdout.read().decode("utf-8", errors="replace").strip()
+    err = stderr.read().decode("utf-8", errors="replace").strip()
+    code = stdout.channel.recv_exit_status()
+    return out, err, int(code)
+
+
+def _list_cloud_remote_models() -> dict:
+    config = _read_cloud_upload_config()
+    if not config.get("host") or not config.get("password"):
+        raise HTTPException(status_code=400, detail="缺少云端 SSH 配置")
+    comfy_root = str(config.get("comfy_root") or CLOUD_COMFY_ROOT).rstrip("/")
+    client = _cloud_connect_from_config(config)
+    try:
+        code = f"""
+import glob, json, os
+root={json.dumps(comfy_root)}
+def items(kind):
+    base=os.path.join(root, 'models', kind)
+    rows=[]
+    for p in sorted(glob.glob(os.path.join(base, '*'))):
+        if not os.path.isfile(p):
+            continue
+        if not p.lower().endswith(('.safetensors','.ckpt','.pt','.bin')):
+            continue
+        rows.append({{'name': os.path.basename(p), 'path': p, 'size': os.path.getsize(p)}})
+    return rows
+print(json.dumps({{'checkpoints': items('checkpoints'), 'loras': items('loras')}}, ensure_ascii=False))
+"""
+        out, err, status = _cloud_exec_text(client, f"/root/miniconda3/bin/python - <<'PY'\n{code}\nPY", timeout=60)
+        if status != 0:
+            raise RuntimeError(err or out or f"remote command failed: {status}")
+        data = json.loads(out.splitlines()[-1])
+        for group in ("checkpoints", "loras"):
+            for item in data.get(group, []):
+                item["size_human"] = _human_bytes(item.get("size"))
+        return {"ok": True, **data}
+    finally:
+        client.close()
+
+
+def _test_cloud_config() -> dict:
+    config = _read_cloud_upload_config()
+    if not config.get("host") or not config.get("password"):
+        raise HTTPException(status_code=400, detail="缺少云端 SSH 配置")
+    comfy_root = str(config.get("comfy_root") or CLOUD_COMFY_ROOT).rstrip("/")
+    client = _cloud_connect_from_config(config)
+    try:
+        command = (
+            "set +e; "
+            "echo HOST=$(hostname); "
+            "if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; else echo NO_NVIDIA_SMI; fi; "
+            f"test -d {comfy_root!r} && echo COMFY_ROOT_OK || echo COMFY_ROOT_MISSING"
+        )
+        out, err, status = _cloud_exec_text(client, command, timeout=35)
+        return {"ok": status == 0, "stdout": out, "stderr": err, "status": status}
+    finally:
+        client.close()
+
+
+def _cloud_runtime_status(force: bool = False) -> dict:
+    now = time.time()
+    with cloud_runtime_lock:
+        cached = cloud_runtime_cache.get("payload")
+        if cached and not force and now - float(cloud_runtime_cache.get("ts") or 0) < 20:
+            return {**cached, "cached": True}
+
+    config = _read_cloud_upload_config()
+    if not config.get("host") or not config.get("password"):
+        payload = {
+            "ok": False,
+            "configured": False,
+            "ssh": False,
+            "gpu": False,
+            "comfyui": False,
+            "message": "缺少云端 SSH 配置",
+        }
+    else:
+        comfy_root = str(config.get("comfy_root") or CLOUD_COMFY_ROOT).rstrip("/")
+        client = None
+        try:
+            client = _cloud_connect_from_config(config)
+            command = (
+                "set +e; "
+                "echo __HOST__; hostname; "
+                "echo __GPU__; "
+                "if command -v nvidia-smi >/dev/null 2>&1; then "
+                "nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader,nounits; "
+                "else echo NO_NVIDIA_SMI; fi; "
+                "echo __COMFY__; "
+                "curl -s --max-time 3 http://127.0.0.1:8188/system_stats >/tmp/codex_comfy_stats.json && echo RUNNING || echo STOPPED; "
+                "echo __ROOT__; "
+                f"test -d {comfy_root!r} && echo OK || echo MISSING"
+            )
+            out, err, status = _cloud_exec_text(client, command, timeout=35)
+            lines = [line.strip() for line in out.splitlines() if line.strip()]
+            gpu_lines = []
+            section = ""
+            comfyui = False
+            root_ok = False
+            host = ""
+            for line in lines:
+                if line.startswith("__") and line.endswith("__"):
+                    section = line
+                    continue
+                if section == "__HOST__" and not host:
+                    host = line
+                elif section == "__GPU__":
+                    gpu_lines.append(line)
+                elif section == "__COMFY__":
+                    comfyui = line == "RUNNING"
+                elif section == "__ROOT__":
+                    root_ok = line == "OK"
+            gpu_available = bool(gpu_lines) and not any("no devices" in x.lower() or "no_nvidia" in x.lower() for x in gpu_lines)
+            payload = {
+                "ok": status == 0 and gpu_available and root_ok,
+                "configured": True,
+                "ssh": True,
+                "gpu": gpu_available,
+                "gpu_lines": gpu_lines,
+                "comfyui": comfyui,
+                "comfy_root_ok": root_ok,
+                "host": host,
+                "stderr": err,
+                "message": "云端 GPU 可用" if gpu_available else "SSH 正常，但当前未检测到 GPU",
+            }
+        except Exception as exc:
+            payload = {
+                "ok": False,
+                "configured": True,
+                "ssh": False,
+                "gpu": False,
+                "comfyui": False,
+                "message": str(exc),
+                "diagnosis": _diagnose_error(str(exc)),
+            }
+        finally:
+            if client is not None:
+                client.close()
+
+    with cloud_runtime_lock:
+        cloud_runtime_cache["ts"] = now
+        cloud_runtime_cache["payload"] = payload
+    return payload
+
+
+def _cloud_remote_snapshot() -> dict:
+    cfg = _read_cloud_upload_config()
+    if not cfg.get("host") or not cfg.get("password"):
+        return {
+            "ok": False,
+            "error": "missing_config",
+            "message": "缺少 data/cloud_upload_config.local.json 或环境变量 CLOUD_SSH_*",
+        }
+    manifest = _cloud_upload_manifest()
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            str(cfg["host"]),
+            port=int(cfg.get("port") or 22),
+            username=str(cfg.get("username") or "root"),
+            password=str(cfg["password"]),
+            timeout=10,
+            banner_timeout=20,
+            auth_timeout=20,
+        )
+        stat_cmd = (
+            "/root/miniconda3/bin/python - <<'PY'\n"
+            "import os,json,subprocess\n"
+            f"paths={json.dumps([item['remote'] for item in manifest] + [item['part'] for item in manifest])}\n"
+            "out={}\n"
+            "for p in paths:\n"
+            "    try: out[p]=os.path.getsize(p)\n"
+            "    except OSError: out[p]=None\n"
+            "try:\n"
+            "    df=subprocess.check_output(['df','-B1','/root/autodl-tmp'], text=True).splitlines()[-1].split()\n"
+            "    disk={'size':int(df[1]),'used':int(df[2]),'avail':int(df[3]),'use_percent':df[4]}\n"
+            "except Exception as e:\n"
+            "    disk={'error':str(e)}\n"
+            "print(json.dumps({'sizes':out,'disk':disk}, ensure_ascii=False))\n"
+            "PY"
+        )
+        stdin, stdout, stderr = client.exec_command(stat_cmd, timeout=15)
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+        payload = json.loads(raw or "{}")
+        remote_sizes = payload.get("sizes") or {}
+        disk = payload.get("disk") or {}
+        files = []
+        completed = 0
+        total = 0
+        for item in manifest:
+            size = int(item["size"])
+            total += size
+            final_size = remote_sizes.get(item["remote"])
+            part_size = remote_sizes.get(item["part"])
+            uploaded = size if final_size == size else int(part_size or 0)
+            completed += min(uploaded, size)
+            files.append(
+                {
+                    **item,
+                    "uploaded": uploaded,
+                    "uploaded_human": _human_bytes(uploaded),
+                    "size_human": _human_bytes(size),
+                    "percent": round((uploaded / size) * 100, 2) if size else 0,
+                    "status": "done" if final_size == size else ("partial" if uploaded else "pending"),
+                }
+            )
+        return {
+            "ok": True,
+            "files": files,
+            "completed": completed,
+            "completed_human": _human_bytes(completed),
+            "total": total,
+            "total_human": _human_bytes(total),
+            "percent": round((completed / total) * 100, 2) if total else 0,
+            "disk": {
+                **disk,
+                "size_human": _human_bytes(disk.get("size")),
+                "used_human": _human_bytes(disk.get("used")),
+                "avail_human": _human_bytes(disk.get("avail")),
+            },
+            "stderr": err,
+        }
+    except Exception as exc:
+        return {"ok": False, "error": "ssh_failed", "message": str(exc)}
+
+
+@app.get("/api/cloud-upload/status")
+async def api_cloud_upload_status():
+    state = cloud_upload_manager.snapshot()
+    remote = _cloud_remote_snapshot()
+    return {"ok": True, "state": state, "remote": remote}
+
+
+@app.post("/api/cloud-upload/start")
+async def api_cloud_upload_start():
+    _sync_cloud_mappings_from_sd_config()
+    started = cloud_upload_manager.start()
+    return {"ok": True, "started": started, "state": cloud_upload_manager.snapshot()}
+
+
+@app.post("/api/cloud-upload/stop")
+async def api_cloud_upload_stop():
+    cloud_upload_manager.stop()
+    return {"ok": True, "state": cloud_upload_manager.snapshot()}
+
+
+@app.get("/api/cloud-settings/config")
+async def api_cloud_settings_config():
+    capabilities = get_cloud_model_capabilities(CLOUD_COMFY_MAPPING_PATH)
+    return {
+        "ok": True,
+        "config": _sanitize_cloud_config(_read_cloud_upload_config()),
+        "mappings": capabilities,
+        "style_options": AVAILABLE_SD_STYLES,
+        "base_options": get_sd_base_models(),
+    }
+
+
+@app.post("/api/cloud-settings/config")
+async def api_cloud_settings_save_config(request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    config = _write_cloud_upload_config(payload)
+    return {"ok": True, "config": _sanitize_cloud_config(config)}
+
+
+@app.post("/api/cloud-settings/test")
+async def api_cloud_settings_test():
+    return _cloud_runtime_status(force=True)
+
+
+@app.get("/api/cloud-settings/remote-models")
+async def api_cloud_settings_remote_models():
+    return _list_cloud_remote_models()
+
+
+@app.get("/api/cloud-runtime/status")
+async def api_cloud_runtime_status(force: bool = Query(False)):
+    return _cloud_runtime_status(force=force)
+
+
+@app.post("/api/cloud-settings/mappings")
+async def api_cloud_settings_save_mappings(request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    clean: dict[str, dict] = {}
+    for section in ("base_models", "loras", "style_prompts", "lora_strength"):
+        value = payload.get(section) or {}
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"{section} 必须是对象")
+        if section == "lora_strength":
+            next_section = {}
+            for key, raw in value.items():
+                if raw in (None, ""):
+                    continue
+                try:
+                    next_section[str(key)] = float(raw)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail=f"{key} 的 LoRA 权重不是数字")
+            clean[section] = next_section
+        else:
+            clean[section] = {str(k): str(v) for k, v in value.items() if v not in (None, "")}
+    CLOUD_COMFY_MAPPING_PATH.write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "mappings": load_cloud_mappings(CLOUD_COMFY_MAPPING_PATH)}
+
+
+@app.get("/api/cloud-comfyui/capabilities")
+async def api_cloud_comfyui_capabilities():
+    _sync_cloud_mappings_from_sd_config()
+    return {"ok": True, **get_cloud_model_capabilities(CLOUD_COMFY_MAPPING_PATH)}
+
+
 @app.get("/api/weather/now")
 async def api_weather_now():
     if not QWEATHER_KEY:
@@ -1062,6 +1978,10 @@ async def api_status(job_id: str):
             "result_count": len(disk.get("result_paths") or []),
             "score": disk.get("score"),
             "next_recipe": disk.get("next_recipe"),
+            "requested_base_model": disk.get("requested_base_model"),
+            "effective_base_model": disk.get("effective_base_model"),
+            "effective_base_label": disk.get("effective_base_label"),
+            "effective_base_type": disk.get("effective_base_type"),
             "diagnosis": diagnosis,
         }
     qj = job_queue.get(job_id)
@@ -1090,6 +2010,10 @@ async def api_status(job_id: str):
         "result_count": len(job.result_paths) if job.result_paths else (1 if job.result_path else 0),
         "score": job.score,
         "next_recipe": job.next_recipe,
+        "requested_base_model": job.requested_base_model,
+        "effective_base_model": job.effective_base_model,
+        "effective_base_label": job.effective_base_label,
+        "effective_base_type": job.effective_base_type,
         "diagnosis": _diagnose_error(job.error),
     }
 
@@ -1274,6 +2198,17 @@ async def api_rerun(job_id: str):
     if mode == "sd":
         sd_style_name = str(params.get("sd_style_name") or "default")
         base_model = str(params.get("base_model") or "default")
+        try:
+            base_resolution = _resolve_sd_request_base(sd_style_name, base_model)
+        except HTTPException as exc:
+            return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+        effective_base_model = str(base_resolution["effective"])
+        effective_base_label = str(base_resolution["label"])
+        effective_base_type = str(base_resolution["type"])
+        new_job.requested_base_model = base_model
+        new_job.effective_base_model = effective_base_model
+        new_job.effective_base_label = effective_base_label
+        new_job.effective_base_type = effective_base_type
         denoise = float(params.get("denoising_strength") or 0.65)
         guidance = float(params.get("guidance_scale") or 5.5)
         steps = int(params.get("num_inference_steps") or 30)
@@ -1283,6 +2218,9 @@ async def api_rerun(job_id: str):
         rerun_params = {
             "sd_style_name": sd_style_name,
             "base_model": base_model,
+            "effective_base_model": effective_base_model,
+            "effective_base_label": effective_base_label,
+            "effective_base_type": effective_base_type,
             "denoising_strength": denoise,
             "guidance_scale": guidance,
             "num_inference_steps": steps,
@@ -1300,7 +2238,7 @@ async def api_rerun(job_id: str):
                 await asyncio.to_thread(
                     run_sd_style_transfer,
                     sd_style_name=sd_style_name,
-                    base_model_key=base_model,
+                    base_model_key=effective_base_model,
                     content_path=new_content_path,
                     output_path=new_result_path,
                     denoising_strength=denoise,
@@ -1365,6 +2303,7 @@ async def api_sd_style_transfer(
     negative_prompt: str = Form(""),
     quick_mode: bool = Form(False),
     candidate_count: int = Form(1),
+    render_backend: str = Form("local"),
 ):
     """
     使用 Stable Diffusion (img2img) + LoRA 做“动漫风格水彩化”。
@@ -1373,13 +2312,28 @@ async def api_sd_style_transfer(
     if sd_style_name not in AVAILABLE_SD_STYLES:
         return JSONResponse({"error": "未知 SD 风格"}, status_code=400)
 
+    try:
+        base_resolution = _resolve_sd_request_base(sd_style_name, base_model)
+    except HTTPException as exc:
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+    effective_base_model = str(base_resolution["effective"])
+    effective_base_label = str(base_resolution["label"])
+    effective_base_type = str(base_resolution["type"])
+
     job_id = str(uuid.uuid4())
     job = JobStatus()
     job.mode = "sd"
+    job.requested_base_model = base_model
+    job.effective_base_model = effective_base_model
+    job.effective_base_label = effective_base_label
+    job.effective_base_type = effective_base_type
     jobs[job_id] = job
     submit_params = {
         "sd_style_name": sd_style_name,
         "base_model": base_model,
+        "effective_base_model": effective_base_model,
+        "effective_base_label": effective_base_label,
+        "effective_base_type": effective_base_type,
         "denoising_strength": denoising_strength,
         "guidance_scale": guidance_scale,
         "num_inference_steps": num_inference_steps,
@@ -1387,6 +2341,7 @@ async def api_sd_style_transfer(
         "negative_prompt": negative_prompt,
         "quick_mode": quick_mode,
         "candidate_count": candidate_count,
+        "render_backend": render_backend,
     }
 
     content_path = UPLOAD_DIR / f"{job_id}_content.png"
@@ -1418,7 +2373,36 @@ async def api_sd_style_transfer(
                 while qj and qj.pause_flag and not qj.cancel_flag:
                     time.sleep(0.2)
 
-            if int(candidate_count) > 1:
+            if render_backend == "cloud_comfyui":
+                if int(candidate_count) > 1:
+                    raise ValueError("云端 ComfyUI 模式暂不支持候选图批量生成")
+                await asyncio.to_thread(
+                    ensure_comfyui,
+                    CLOUD_UPLOAD_CONFIG_PATH,
+                )
+                await asyncio.to_thread(
+                    run_cloud_img2img,
+                    config_path=CLOUD_UPLOAD_CONFIG_PATH,
+                    mapping_path=CLOUD_COMFY_MAPPING_PATH,
+                    sd_style_name=sd_style_name,
+                    base_model_key=effective_base_model,
+                    content_path=content_path,
+                    output_path=result_path,
+                    denoising_strength=denoising_strength,
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=num_inference_steps,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    quick_mode=quick_mode,
+                    progress_callback=progress_callback,
+                    phase_callback=phase_callback,
+                )
+                job.result_path = result_path
+                job.result_paths = [result_path]
+                s = score_image(result_path).as_dict()
+                job.score = s
+                job.next_recipe = s.get("recommendation")
+            elif int(candidate_count) > 1:
                 out_dir = RESULT_DIR / f"{job_id}_cands"
                 paths = await asyncio.to_thread(
                     run_sd_style_transfer_candidates,
@@ -1426,7 +2410,7 @@ async def api_sd_style_transfer(
                     output_dir=out_dir,
                     output_prefix=job_id,
                     sd_style_name=sd_style_name,
-                    base_model_key=base_model,
+                    base_model_key=effective_base_model,
                     content_path=content_path,
                     denoising_strength=denoising_strength,
                     guidance_scale=guidance_scale,
@@ -1451,7 +2435,7 @@ async def api_sd_style_transfer(
                 await asyncio.to_thread(
                     run_sd_style_transfer,
                     sd_style_name=sd_style_name,
-                    base_model_key=base_model,
+                    base_model_key=effective_base_model,
                     content_path=content_path,
                     output_path=result_path,
                     denoising_strength=denoising_strength,
@@ -1485,6 +2469,10 @@ async def api_sd_style_transfer(
                     "style": sd_style_name,
                     "params": {
                         "base_model": base_model,
+                        "effective_base_model": effective_base_model,
+                        "effective_base_label": effective_base_label,
+                        "effective_base_type": effective_base_type,
+                        "render_backend": render_backend,
                         "denoise": denoising_strength,
                         "guidance": guidance_scale,
                         "steps": num_inference_steps,
@@ -1507,7 +2495,14 @@ async def api_sd_style_transfer(
     q_job = QueueJob(job_id=job_id, mode="sd", run_coro_factory=run)
     await job_queue.submit(q_job)
     _persist_job(job_id, submit_params)
-    return {"job_id": job_id, "status": "queued"}
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "requested_base_model": base_model,
+        "effective_base_model": effective_base_model,
+        "effective_base_label": effective_base_label,
+        "effective_base_type": effective_base_type,
+    }
 
 
 @app.get("/api/warmup-status")

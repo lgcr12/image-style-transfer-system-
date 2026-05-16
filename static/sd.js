@@ -34,6 +34,18 @@ const quickModeInput = document.getElementById("quick-mode-input");
 const sdStyleSelect = document.getElementById("sd-style-select");
 const sdBaseSelect = document.getElementById("sd-base-select");
 const sdBaseHint = document.getElementById("sd-base-hint");
+const backendLocalBtn = document.getElementById("backend-local-btn");
+const backendCloudBtn = document.getElementById("backend-cloud-btn");
+const renderBackendHint = document.getElementById("render-backend-hint");
+const cloudRuntimeCard = document.getElementById("cloud-runtime-card");
+const cloudRefreshBtn = document.getElementById("cloud-refresh-btn");
+const cloudSshState = document.getElementById("cloud-ssh-state");
+const cloudGpuState = document.getElementById("cloud-gpu-state");
+const cloudComfyState = document.getElementById("cloud-comfy-state");
+const cloudRootState = document.getElementById("cloud-root-state");
+const cloudRuntimeDetail = document.getElementById("cloud-runtime-detail");
+const actualModelText = document.getElementById("actual-model-text");
+const compatibilityWarning = document.getElementById("compatibility-warning");
 const promptInput = document.getElementById("prompt-input");
 const negativePromptInput = document.getElementById("negative-prompt-input");
 const positivePresetSelect = document.getElementById("positive-preset-select");
@@ -57,6 +69,26 @@ const shareResultText = document.getElementById("share-result-text");
 
 /** 下载文件名前缀（与 /api/result 的 label 对应） */
 const PAGE_DOWNLOAD_LABEL = "sd-img2img";
+let renderBackend = localStorage.getItem("sd_render_backend") || "local";
+
+function updateRenderBackendUi() {
+  const isCloud = renderBackend === "cloud_comfyui";
+  if (backendLocalBtn) backendLocalBtn.classList.toggle("tool-btn-primary", !isCloud);
+  if (backendCloudBtn) backendCloudBtn.classList.toggle("tool-btn-primary", isCloud);
+  if (renderBackendHint) {
+    renderBackendHint.textContent = isCloud
+      ? "当前使用云端 RTX 4090 / ComfyUI；首次生成会检查远端服务。"
+      : "当前使用本地生成；切到云端 4090 后会调用远端 ComfyUI。";
+  }
+}
+
+function setRenderBackend(value) {
+  renderBackend = value === "cloud_comfyui" ? "cloud_comfyui" : "local";
+  localStorage.setItem("sd_render_backend", renderBackend);
+  updateRenderBackendUi();
+  updateActualModelSummary();
+  if (renderBackend === "cloud_comfyui") void refreshCloudRuntimeStatus(false);
+}
 
 let currentJobId = null;
 let pollingTimer = null;
@@ -70,6 +102,7 @@ let genFrame = null;
 let genParticles = [];
 let genProgress = 0;
 let sdPluginConfig = { styles: {}, baseModels: {}, activeBaseModel: "default" };
+let cloudRuntimeStatus = null;
 
 const PHASE_LABELS = {
   pending: "排队",
@@ -101,6 +134,91 @@ function updateBaseModelHint() {
     sdBaseHint.textContent = selected === "default" ? "默认 SD1.5" : baseModelLabel(selected);
     if (bound && selected !== bound) sdBaseHint.textContent += ` / LoRA 建议：${baseModelLabel(bound)}`;
   }
+  updateActualModelSummary();
+}
+
+function setCloudStatePill(el, label, ok, warn = false) {
+  if (!el) return;
+  el.textContent = label;
+  el.classList.remove("text-emerald-300", "text-red-300", "text-amber-300", "text-slate-400");
+  el.classList.add(ok ? "text-emerald-300" : warn ? "text-amber-300" : "text-red-300");
+}
+
+function renderCloudRuntimeStatus(data) {
+  cloudRuntimeStatus = data || null;
+  if (!cloudRuntimeCard) return;
+  const isCloud = renderBackend === "cloud_comfyui";
+  cloudRuntimeCard.classList.toggle("hidden", !isCloud);
+  if (!isCloud) return;
+
+  if (!data) {
+    setCloudStatePill(cloudSshState, "SSH：未检测", false, true);
+    setCloudStatePill(cloudGpuState, "GPU：未检测", false, true);
+    setCloudStatePill(cloudComfyState, "ComfyUI：未检测", false, true);
+    setCloudStatePill(cloudRootState, "目录：未检测", false, true);
+    if (cloudRuntimeDetail) cloudRuntimeDetail.textContent = "切换到云端后会自动检测实例、显卡和 ComfyUI 状态。";
+    return;
+  }
+
+  const configured = data.configured !== false;
+  setCloudStatePill(cloudSshState, configured ? (data.ssh ? "SSH：已连接" : "SSH：失败") : "SSH：未配置", !!data.ssh);
+  setCloudStatePill(cloudGpuState, data.gpu ? "GPU：可用" : "GPU：不可用", !!data.gpu);
+  setCloudStatePill(cloudComfyState, data.comfyui ? "ComfyUI：在线" : "ComfyUI：未在线", !!data.comfyui, data.ssh && data.gpu);
+  setCloudStatePill(cloudRootState, data.comfy_root_ok ? "目录：正常" : "目录：异常", !!data.comfy_root_ok);
+
+  const gpu = Array.isArray(data.gpu_lines) && data.gpu_lines.length ? data.gpu_lines.join(" / ") : "未识别到显卡";
+  const host = data.host ? `主机：${data.host}` : "";
+  const message = data.message || (data.ok ? "云端运行环境正常。" : "云端运行环境未就绪。");
+  if (cloudRuntimeDetail) cloudRuntimeDetail.textContent = [message, host, gpu].filter(Boolean).join(" · ");
+}
+
+async function refreshCloudRuntimeStatus(force = false) {
+  if (renderBackend !== "cloud_comfyui") {
+    renderCloudRuntimeStatus(null);
+    return null;
+  }
+  if (cloudRefreshBtn) cloudRefreshBtn.disabled = true;
+  if (cloudRuntimeDetail) cloudRuntimeDetail.textContent = "正在检测云端实例状态...";
+  try {
+    const resp = await fetch(`/api/cloud-runtime/status?force=${force ? "1" : "0"}`, { cache: "no-store" });
+    const data = await resp.json();
+    renderCloudRuntimeStatus(data);
+    return data;
+  } catch (error) {
+    console.error(error);
+    const data = { ok: false, ssh: false, gpu: false, comfyui: false, comfy_root_ok: false, message: "云端状态检测失败，请检查网络或实例。", diagnosis: { code: "cloud_probe_failed" } };
+    renderCloudRuntimeStatus(data);
+    return data;
+  } finally {
+    if (cloudRefreshBtn) cloudRefreshBtn.disabled = false;
+  }
+}
+
+function modelCompatibilityIssue() {
+  const styleKey = sdStyleSelect ? sdStyleSelect.value : "";
+  const style = sdPluginConfig.styles && sdPluginConfig.styles[styleKey];
+  const styleBase = style && style.base_model ? String(style.base_model) : "";
+  const selectedBase = currentEffectiveBaseKey();
+  if (!styleBase || !selectedBase || selectedBase === "default") return "";
+  const styleIsXl = isLikelyXlBase(styleBase);
+  const selectedIsXl = isLikelyXlBase(selectedBase);
+  if (styleIsXl !== selectedIsXl) {
+    return `当前 LoRA 建议使用 ${baseModelLabel(styleBase)}，但实际底模是 ${baseModelLabel(selectedBase)}。请切换为“跟随当前 LoRA 绑定”或选择同体系底模。`;
+  }
+  return "";
+}
+
+function updateActualModelSummary() {
+  const baseKey = currentEffectiveBaseKey();
+  const styleKey = sdStyleSelect ? sdStyleSelect.value : "default";
+  const backendText = renderBackend === "cloud_comfyui" ? "云端 ComfyUI" : "本地";
+  const line = `${backendText} · 底模：${baseModelLabel(baseKey)} · LoRA：${styleKey || "default"}`;
+  if (actualModelText) actualModelText.textContent = line;
+  const issue = modelCompatibilityIssue();
+  if (compatibilityWarning) {
+    compatibilityWarning.textContent = issue;
+    compatibilityWarning.classList.toggle("hidden", !issue);
+  }
 }
 
 function isLikelyXlBase(baseKey) {
@@ -109,7 +227,39 @@ function isLikelyXlBase(baseKey) {
   return text.includes("xl") || text.includes("sdxl");
 }
 
-function syncBaseModelForStyle() {
+function currentEffectiveBaseKey() {
+  const selected = sdBaseSelect ? sdBaseSelect.value : "default";
+  if (selected === "style_bound") return currentStyleBoundBase() || "default";
+  return selected || "default";
+}
+
+function currentEffectiveBaseIsXl() {
+  return isLikelyXlBase(currentEffectiveBaseKey());
+}
+
+function applyBaseSpeedPreset() {
+  const isXl = currentEffectiveBaseIsXl();
+  if (isXl) {
+    if (stepsInput && Number.parseInt(stepsInput.value || "0", 10) > 24) {
+      stepsInput.value = "24";
+      syncRangeUI(stepsInput, stepsValue, 0);
+    }
+    if (guidanceInput && Number.parseFloat(guidanceInput.value || "0") > 7) {
+      guidanceInput.value = "7";
+      syncRangeUI(guidanceInput, guidanceValue, 1);
+    }
+    if (quickModeInput) quickModeInput.checked = true;
+    if (statusText) {
+      statusText.textContent = `已识别 SDXL 底模：${baseModelLabel(currentEffectiveBaseKey())}，自动套用快速预设（24步 / quick）`;
+    }
+    return;
+  }
+  if (statusText) {
+    statusText.textContent = `当前走 SD1.5 快速路径：${baseModelLabel(currentEffectiveBaseKey())}`;
+  }
+}
+
+function syncBaseModelForStyle(applyPreset = false) {
   if (!sdBaseSelect) return;
   const bound = currentStyleBoundBase();
   if (bound && isLikelyXlBase(bound) && sdBaseSelect.value === "default") {
@@ -117,6 +267,7 @@ function syncBaseModelForStyle() {
     if (statusText) statusText.textContent = `当前 LoRA 需要 XL 基础模型，已自动切换为「跟随当前 LoRA 绑定」`;
   }
   updateBaseModelHint();
+  if (applyPreset) applyBaseSpeedPreset();
 }
 
 function populateBaseModelSelect() {
@@ -187,6 +338,14 @@ function showUiNotice(message, kind = "info") {
     placeholder.textContent = message;
   }
   if (progressPhase && kind !== "success") progressPhase.textContent = message;
+}
+
+function readableFetchError(error, fallback = "请求失败，请稍后重试。") {
+  const raw = error && error.message ? String(error.message) : "";
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    return "后端服务未连接或刚刚重启，请刷新页面后重试。";
+  }
+  return raw || fallback;
 }
 
 function setProgressHud(visible, phaseText = "", percent = 0) {
@@ -397,8 +556,9 @@ function formatPhaseLine(data) {
   const tag = PHASE_LABELS[code] || code || "状态";
   const det = (data.phase_detail || "").trim();
   const pct = data.progress != null ? `${data.progress}%` : "";
-  if (det) return `${tag} · ${det}${pct ? ` · ${pct}` : ""}`;
-  return pct ? `${tag} · ${pct}` : tag;
+  const base = data.effective_base_label ? ` · ${data.effective_base_label}` : "";
+  if (det) return `${tag} · ${det}${base}${pct ? ` · ${pct}` : ""}`;
+  return pct ? `${tag}${base} · ${pct}` : `${tag}${base}`;
 }
 
 function notifyDone(title, body) {
@@ -430,7 +590,7 @@ function randomizeSdParams() {
     const opts = Array.from(sdStyleSelect.options);
     const pick = opts[Math.floor(Math.random() * opts.length)];
     sdStyleSelect.value = pick.value;
-    syncBaseModelForStyle();
+    syncBaseModelForStyle(true);
   }
   if (denoiseInput) {
     const min = Number.parseFloat(denoiseInput.min);
@@ -611,7 +771,7 @@ function applySuggestion() {
   const r = latestAnalyzeSuggestion.recommended || {};
   if (sdStyleSelect) {
     sdStyleSelect.value = latestAnalyzeSuggestion.style_suggestion || sdStyleSelect.value;
-    syncBaseModelForStyle();
+    syncBaseModelForStyle(true);
   }
   if (stepsInput && r.steps != null) {
     stepsInput.value = String(r.steps);
@@ -1178,7 +1338,7 @@ function downloadUrlForJob(jobId, index = 0, label = PAGE_DOWNLOAD_LABEL) {
   return `/api/result/${jobId}?${p.toString()}`;
 }
 
-function appendResultWithDownload(jobId, imageIndex, altText) {
+function appendResultWithDownload(jobId, imageIndex, altText, meta = {}) {
   if (!resultGallery) return;
   const wrap = document.createElement("div");
   wrap.className = "result-item";
@@ -1193,6 +1353,12 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   img.style.boxShadow = "0 24px 70px rgba(0,0,0,0.38)";
   img.classList.add("fade-in", "active");
   wrap.appendChild(img);
+  if (meta.effective_base_label) {
+    const metaLine = document.createElement("div");
+    metaLine.className = "result-model-meta mono text-[10px] text-slate-500";
+    metaLine.textContent = `实际底模：${meta.effective_base_label}${meta.effective_base_type ? ` · ${String(meta.effective_base_type).toUpperCase()}` : ""}`;
+    wrap.appendChild(metaLine);
+  }
   const actions = document.createElement("div");
   actions.className = "result-actions";
   const dlResult = document.createElement("a");
@@ -1296,7 +1462,7 @@ function appendResultWithDownload(jobId, imageIndex, altText) {
   resultGallery.appendChild(wrap);
 }
 
-function showSingleResult(jobId) {
+function showSingleResult(jobId, meta = {}) {
   if (!resultGallery) return;
   clearGallery();
   setProcessingOverlay(false);
@@ -1304,11 +1470,11 @@ function showSingleResult(jobId) {
   stopGenerationVisual();
   const placeholder = document.getElementById("result-placeholder");
   if (placeholder) placeholder.style.display = "none";
-  appendResultWithDownload(jobId, 0, "转换结果");
+  appendResultWithDownload(jobId, 0, "转换结果", meta);
   scrollSdResultIntoView();
 }
 
-function showBatchResults(jobId, count) {
+function showBatchResults(jobId, count, meta = {}) {
   if (!resultGallery) return;
   clearGallery();
   setProcessingOverlay(false);
@@ -1318,7 +1484,7 @@ function showBatchResults(jobId, count) {
   if (placeholder) placeholder.style.display = "none";
   const n = Math.max(0, Number(count || 0));
   for (let i = 0; i < n; i++) {
-    appendResultWithDownload(jobId, i, `转换结果 ${i + 1}`);
+    appendResultWithDownload(jobId, i, `转换结果 ${i + 1}`, meta);
   }
   scrollSdResultIntoView();
 }
@@ -1359,16 +1525,18 @@ async function submitQueueSdJob() {
   formData.append("prompt", posResult.text);
   formData.append("negative_prompt", negResult.text);
   formData.append("quick_mode", quickModeInput && quickModeInput.checked ? "1" : "0");
+  formData.append("render_backend", renderBackend);
 
   const resp = await fetch("/api/sd-style-transfer", { method: "POST", body: formData });
   const data = await resp.json();
   if (!resp.ok || data.error) throw new Error(data.error || "任务创建失败");
 
   currentJobId = data.job_id;
+  const submittedBase = data.effective_base_label || baseModelLabel(currentEffectiveBaseKey());
   statusText.textContent =
     queueFiles.length > 1
-      ? `已提交队列 ${queueIdx + 1}/${queueFiles.length}，等待处理…`
-      : "任务已创建，开始处理…";
+      ? `已提交队列 ${queueIdx + 1}/${queueFiles.length}，底模：${submittedBase}，等待处理…`
+      : `任务已创建，底模：${submittedBase}，开始处理…`;
   pollStatus();
 }
 
@@ -1376,6 +1544,25 @@ async function startSdStyleTransfer() {
   if (!contentInput || !contentInput.files || contentInput.files.length === 0) {
     showUiNotice("请先上传内容图，再点击开始执行渲染。", "error");
     return;
+  }
+
+  const compatibility = modelCompatibilityIssue();
+  if (compatibility) {
+    showUiNotice(compatibility, "error");
+    return;
+  }
+
+  if (renderBackend === "cloud_comfyui") {
+    const cloudStatus = await refreshCloudRuntimeStatus(false);
+    if (!cloudStatus || cloudStatus.configured === false || !cloudStatus.ssh || !cloudStatus.gpu || !cloudStatus.comfy_root_ok) {
+      const diagnosis = cloudStatus && cloudStatus.diagnosis;
+      const advice = diagnosis && diagnosis.advice ? diagnosis.advice : "请先确认云端实例已切回 RTX 4090 GPU 模式，并且 ComfyUI 目录存在。";
+      showUiNotice(`云端未就绪：${advice}`, "error");
+      return;
+    }
+    if (!cloudStatus.comfyui) {
+      showUiNotice("云端 GPU 可用，ComfyUI 暂未在线，后端会尝试自动启动。");
+    }
   }
 
   const posResult = dedupePromptText(promptInput ? promptInput.value : "");
@@ -1414,7 +1601,7 @@ async function startSdStyleTransfer() {
     await submitQueueSdJob();
   } catch (e) {
     console.error(e);
-    showUiNotice("提交失败：" + e.message, "error");
+    showUiNotice("提交失败：" + readableFetchError(e), "error");
     queueFiles = [];
     queueIdx = 0;
     updateQueueBanner();
@@ -1445,8 +1632,18 @@ async function pollStatus() {
 
   try {
     const resp = await fetch(`/api/status/${currentJobId}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || "状态查询失败");
+    let data = {};
+    try {
+      data = await resp.json();
+    } catch (_) {
+      data = {};
+    }
+    if (!resp.ok) {
+      const message = data.error || (resp.status === 404 ? "任务不存在，可能是服务重启后旧任务已失效。" : "状态查询失败");
+      const err = new Error(message);
+      err.status = resp.status;
+      throw err;
+    }
 
     progressBar.style.width = `${data.progress || 0}%`;
 
@@ -1509,8 +1706,8 @@ async function pollStatus() {
       queueIdx = 0;
       updateQueueBanner();
       playCompleteCelebration();
-      if (kind === "batch" && count > 1) showBatchResults(currentJobId, count);
-      else showSingleResult(currentJobId);
+      if (kind === "batch" && count > 1) showBatchResults(currentJobId, count, data);
+      else showSingleResult(currentJobId, data);
       return;
     }
 
@@ -1523,14 +1720,17 @@ async function pollStatus() {
       queueFiles = [];
       queueIdx = 0;
       updateQueueBanner();
-      if (kind === "batch" && count > 1) showBatchResults(currentJobId, count);
-      else if (data.has_result) showSingleResult(currentJobId);
+      if (kind === "batch" && count > 1) showBatchResults(currentJobId, count, data);
+      else if (data.has_result) showSingleResult(currentJobId, data);
       return;
     }
 
     if (status === "error") {
-      showUiNotice("任务失败：" + (data.error || "未知错误"), "error");
-      setProgressHud(true, "渲染失败，请调整参数后重试。", data.progress || 0);
+      const diagnosis = data.diagnosis || null;
+      const errorTitle = diagnosis && diagnosis.title ? diagnosis.title : "任务失败";
+      const errorAdvice = diagnosis && diagnosis.advice ? diagnosis.advice : (data.error || "未知错误");
+      showUiNotice(`${errorTitle}：${errorAdvice}`, "error");
+      setProgressHud(true, errorTitle, data.progress || 0);
       stopGenerationVisual();
       setCancelEnabled(false);
       setProcessingOverlay(false);
@@ -1543,11 +1743,13 @@ async function pollStatus() {
     pollingTimer = setTimeout(pollStatus, nextPollMs());
   } catch (e) {
     console.error(e);
-    showUiNotice("查询状态失败", "error");
-    setProgressHud(true, "状态查询失败，请稍后重试。", 0);
+    const message = readableFetchError(e, "状态查询失败，请稍后重试。");
+    showUiNotice(message, "error");
+    setProgressHud(true, message, 0);
     stopGenerationVisual();
     setCancelEnabled(false);
     setProcessingOverlay(false);
+    if (e && e.status === 404) currentJobId = null;
   }
 }
 
@@ -1592,7 +1794,7 @@ function applySdEntry(entry) {
   if (quickModeInput) quickModeInput.checked = !!entry.quick;
   if (promptInput && entry.prompt != null) promptInput.value = entry.prompt;
   if (negativePromptInput && entry.negative != null) negativePromptInput.value = entry.negative;
-  syncBaseModelForStyle();
+  syncBaseModelForStyle(true);
 }
 
 function consumeHistoryApplySd() {
@@ -1622,6 +1824,24 @@ function consumeHistoryPreviewSd() {
   }
 }
 
+function consumeHistoryPollSd() {
+  try {
+    const raw = sessionStorage.getItem("historyPoll");
+    if (!raw) return;
+    sessionStorage.removeItem("historyPoll");
+    const { jobId, type } = JSON.parse(raw);
+    if (!jobId || type !== "sd") return;
+    currentJobId = jobId;
+    clearGallery();
+    setProcessingOverlay(true);
+    setProgressHud(true, "正在接管历史重跑任务…", 3);
+    showUiNotice("已提交历史重跑任务，正在刷新进度…");
+    void pollStatus();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 if (runBtn) runBtn.addEventListener("click", startSdStyleTransfer);
 if (cancelBtn) cancelBtn.addEventListener("click", cancelCurrentJob);
 if (analyzeInputBtn) analyzeInputBtn.addEventListener("click", () => void analyzeInputAndSuggest().catch((e) => alert(e.message)));
@@ -1635,14 +1855,20 @@ if (exportTransitionBtn) exportTransitionBtn.addEventListener("click", () => voi
 if (buildShareCardBtn) buildShareCardBtn.addEventListener("click", () => void buildShare("xiaohongshu").catch((e) => alert(e.message)));
 if (buildXhsCoverBtn) buildXhsCoverBtn.addEventListener("click", () => void buildShare("xiaohongshu").catch((e) => alert(e.message)));
 if (buildDyCoverBtn) buildDyCoverBtn.addEventListener("click", () => void buildShare("douyin").catch((e) => alert(e.message)));
+if (backendLocalBtn) backendLocalBtn.addEventListener("click", () => setRenderBackend("local"));
+if (backendCloudBtn) backendCloudBtn.addEventListener("click", () => setRenderBackend("cloud_comfyui"));
+if (cloudRefreshBtn) cloudRefreshBtn.addEventListener("click", () => void refreshCloudRuntimeStatus(true));
 if (sdStyleSelect) {
   sdStyleSelect.addEventListener("change", () => {
     applyStyleRecommendation(sdStyleSelect.value);
-    syncBaseModelForStyle();
+    syncBaseModelForStyle(true);
   });
 }
 if (sdBaseSelect) {
-  sdBaseSelect.addEventListener("change", updateBaseModelHint);
+  sdBaseSelect.addEventListener("change", () => {
+    updateBaseModelHint();
+    applyBaseSpeedPreset();
+  });
 }
 
 const sdRandomParamsBtn = document.getElementById("sd-random-params-btn");
@@ -1692,8 +1918,13 @@ document.querySelectorAll(".scene-preset-card").forEach((btn) => {
 });
 
 void loadSdPluginConfig().finally(() => {
+  updateRenderBackendUi();
+  renderCloudRuntimeStatus(cloudRuntimeStatus);
   consumeHistoryApplySd();
   consumeHistoryPreviewSd();
+  consumeHistoryPollSd();
   if (sdStyleSelect) applyStyleRecommendation(sdStyleSelect.value);
-  syncBaseModelForStyle();
+  syncBaseModelForStyle(true);
+  updateActualModelSummary();
+  if (renderBackend === "cloud_comfyui") void refreshCloudRuntimeStatus(false);
 });

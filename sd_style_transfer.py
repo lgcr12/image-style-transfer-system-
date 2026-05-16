@@ -207,6 +207,21 @@ def _base_model_info(base_key: str) -> dict[str, Any]:
     return info if isinstance(info, dict) else {}
 
 
+def resolve_sd_base_model_key(sd_style_name: Optional[str] = None, base_model_key: Optional[str] = None) -> str:
+    base_key, _, _ = _resolve_base_model_selection(sd_style_name, base_model_key)
+    return base_key
+
+
+def get_sd_base_model_info(base_key: str) -> dict[str, Any]:
+    return dict(_base_model_info(base_key))
+
+
+def is_sd_base_model_sdxl(base_key: str) -> bool:
+    info = _base_model_info(base_key)
+    model_type = str(info.get("model_type") or info.get("type") or "").lower()
+    return "sdxl" in model_type or "xl" in model_type or "xl" in str(base_key or "").lower()
+
+
 def _looks_like_sdxl(model_id_or_path: str, base_key: str, config_dir: Optional[str]) -> bool:
     info = _base_model_info(base_key)
     model_type = str(info.get("model_type") or info.get("type") or "").lower()
